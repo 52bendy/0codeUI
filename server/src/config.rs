@@ -1,0 +1,304 @@
+//! 配置加载：全部来自环境变量（本地开发可选用 `.env`），密钥不落库、不入仓。
+//!
+//! 所有可配置项见 [`AppConfig`] 字段注释；样例见仓库根目录 `.env.example`。
+
+use std::collections::HashMap;
+use std::fmt;
+use std::str::FromStr;
+
+/// 运行环境。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Environment {
+    /// 开发环境。
+    Dev,
+    /// 生产环境。
+    Prod,
+}
+
+impl Environment {
+    /// 环境名称（用于日志与健康检查输出）。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dev => "dev",
+            Self::Prod => "prod",
+        }
+    }
+}
+
+impl FromStr for Environment {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "dev" | "development" => Ok(Self::Dev),
+            "prod" | "production" => Ok(Self::Prod),
+            other => Err(format!("expected `dev` or `prod`, got `{other}`")),
+        }
+    }
+}
+
+/// 日志输出格式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogFormat {
+    /// 本地开发友好的多行格式。
+    Pretty,
+    /// 生产友好的 JSON 单行格式。
+    Json,
+}
+
+impl FromStr for LogFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "pretty" | "text" => Ok(Self::Pretty),
+            "json" => Ok(Self::Json),
+            other => Err(format!("expected `pretty` or `json`, got `{other}`")),
+        }
+    }
+}
+
+/// 配置错误。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigError {
+    /// 出错的配置项（环境变量名）。
+    pub key: &'static str,
+    /// 错误说明。
+    pub message: String,
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid config `{}`: {}", self.key, self.message)
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+/// 服务配置（全部可通过环境变量注入）。
+#[derive(Debug, Clone)]
+pub struct AppConfig {
+    /// 运行环境：`APP_ENV`（dev / prod，默认 dev）。
+    pub env: Environment,
+    /// 监听地址：`APP_HOST`（默认 0.0.0.0）。
+    pub host: String,
+    /// 监听端口：`APP_PORT`（默认 8080）。
+    pub port: u16,
+    /// 日志级别：`LOG_LEVEL`（默认 info，亦兼容 `RUST_LOG`）。
+    pub log_level: String,
+    /// 日志格式：`LOG_FORMAT`（默认 dev=pretty / prod=json）。
+    pub log_format: LogFormat,
+    /// 开发鉴权模式：`AUTH_DEV_MODE`（默认 dev=true / prod=false）。
+    ///
+    /// 开启后接受 `Authorization: Bearer dev:<user_id>`，仅供本地联调；生产环境强制关闭。
+    pub auth_dev_mode: bool,
+    /// 静态令牌表：`AUTH_STATIC_TOKENS`（格式 `token1:user_id1,token2:user_id2`）。
+    pub auth_static_tokens: HashMap<String, String>,
+    /// 是否启用限流：`RATE_LIMIT_ENABLED`（默认 true）。
+    pub rate_limit_enabled: bool,
+    /// 限流速率：`RATE_LIMIT_RPS`（每秒补充令牌数，默认 50）。
+    pub rate_limit_rps: f64,
+    /// 限流桶容量：`RATE_LIMIT_BURST`（默认 100）。
+    pub rate_limit_burst: u32,
+    /// 请求处理超时秒数：`REQUEST_TIMEOUT_SECS`（默认 30）。
+    pub request_timeout_secs: u64,
+}
+
+impl AppConfig {
+    /// 从环境变量加载配置。
+    pub fn from_env() -> Result<Self, ConfigError> {
+        let env = match optional_env("APP_ENV") {
+            Some(value) => Environment::from_str(&value).map_err(|message| ConfigError {
+                key: "APP_ENV",
+                message,
+            })?,
+            None => Environment::Dev,
+        };
+
+        let host = env_string("APP_HOST", "0.0.0.0");
+        let port = env_parse("APP_PORT", 8080u16)?;
+        let log_level = optional_env("LOG_LEVEL")
+            .or_else(|| optional_env("RUST_LOG"))
+            .unwrap_or_else(|| "info".to_string());
+
+        let log_format = match optional_env("LOG_FORMAT") {
+            Some(value) => LogFormat::from_str(&value).map_err(|message| ConfigError {
+                key: "LOG_FORMAT",
+                message,
+            })?,
+            None => match env {
+                Environment::Dev => LogFormat::Pretty,
+                Environment::Prod => LogFormat::Json,
+            },
+        };
+
+        let auth_dev_mode = match optional_env("AUTH_DEV_MODE") {
+            Some(value) => parse_bool("AUTH_DEV_MODE", &value)?,
+            None => env == Environment::Dev,
+        };
+        if env == Environment::Prod && auth_dev_mode {
+            return Err(ConfigError {
+                key: "AUTH_DEV_MODE",
+                message: "dev auth mode must be disabled in prod".to_string(),
+            });
+        }
+
+        let auth_static_tokens = match optional_env("AUTH_STATIC_TOKENS") {
+            Some(value) => parse_static_tokens(&value).map_err(|message| ConfigError {
+                key: "AUTH_STATIC_TOKENS",
+                message,
+            })?,
+            None => HashMap::new(),
+        };
+
+        let rate_limit_enabled = match optional_env("RATE_LIMIT_ENABLED") {
+            Some(value) => parse_bool("RATE_LIMIT_ENABLED", &value)?,
+            None => true,
+        };
+        let rate_limit_rps = env_parse("RATE_LIMIT_RPS", 50.0f64)?;
+        if !(rate_limit_rps.is_finite() && rate_limit_rps > 0.0) {
+            return Err(ConfigError {
+                key: "RATE_LIMIT_RPS",
+                message: "must be a positive number".to_string(),
+            });
+        }
+        let rate_limit_burst = env_parse("RATE_LIMIT_BURST", 100u32)?;
+        if rate_limit_burst == 0 {
+            return Err(ConfigError {
+                key: "RATE_LIMIT_BURST",
+                message: "must be >= 1".to_string(),
+            });
+        }
+        let request_timeout_secs = env_parse("REQUEST_TIMEOUT_SECS", 30u64)?;
+        if request_timeout_secs == 0 {
+            return Err(ConfigError {
+                key: "REQUEST_TIMEOUT_SECS",
+                message: "must be >= 1".to_string(),
+            });
+        }
+
+        Ok(Self {
+            env,
+            host,
+            port,
+            log_level,
+            log_format,
+            auth_dev_mode,
+            auth_static_tokens,
+            rate_limit_enabled,
+            rate_limit_rps,
+            rate_limit_burst,
+            request_timeout_secs,
+        })
+    }
+}
+
+impl Default for AppConfig {
+    /// 开发环境友好的默认配置（供测试与本地快速启动使用）。
+    fn default() -> Self {
+        Self {
+            env: Environment::Dev,
+            host: "0.0.0.0".to_string(),
+            port: 8080,
+            log_level: "info".to_string(),
+            log_format: LogFormat::Pretty,
+            auth_dev_mode: true,
+            auth_static_tokens: HashMap::new(),
+            rate_limit_enabled: true,
+            rate_limit_rps: 50.0,
+            rate_limit_burst: 100,
+            request_timeout_secs: 30,
+        }
+    }
+}
+
+fn optional_env(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn env_string(key: &str, default: &str) -> String {
+    optional_env(key).unwrap_or_else(|| default.to_string())
+}
+
+fn env_parse<T>(key: &'static str, default: T) -> Result<T, ConfigError>
+where
+    T: FromStr,
+    T::Err: fmt::Display,
+{
+    match optional_env(key) {
+        Some(value) => value.parse::<T>().map_err(|error| ConfigError {
+            key,
+            message: error.to_string(),
+        }),
+        None => Ok(default),
+    }
+}
+
+fn parse_bool(key: &'static str, value: &str) -> Result<bool, ConfigError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        other => Err(ConfigError {
+            key,
+            message: format!("expected boolean, got `{other}`"),
+        }),
+    }
+}
+
+/// 解析静态令牌表：`token1:user_id1,token2:user_id2`。
+fn parse_static_tokens(value: &str) -> Result<HashMap<String, String>, String> {
+    let mut tokens = HashMap::new();
+    for entry in value.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let (token, user_id) = entry
+            .split_once(':')
+            .ok_or_else(|| format!("entry `{entry}` must be in `token:user_id` form"))?;
+        let token = token.trim();
+        let user_id = user_id.trim();
+        if token.is_empty() || user_id.is_empty() {
+            return Err(format!("entry `{entry}` must be in `token:user_id` form"));
+        }
+        tokens.insert(token.to_string(), user_id.to_string());
+    }
+    Ok(tokens)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_static_tokens_accepts_pairs() {
+        let tokens = parse_static_tokens("t1:u1, t2:u2").unwrap();
+        assert_eq!(tokens.get("t1").map(String::as_str), Some("u1"));
+        assert_eq!(tokens.get("t2").map(String::as_str), Some("u2"));
+    }
+
+    #[test]
+    fn parse_static_tokens_rejects_malformed_entries() {
+        assert!(parse_static_tokens("bad-entry").is_err());
+        assert!(parse_static_tokens("token:").is_err());
+        assert!(parse_static_tokens(":user").is_err());
+    }
+
+    #[test]
+    fn environment_parsing_is_case_insensitive() {
+        assert_eq!(Environment::from_str("dev").unwrap(), Environment::Dev);
+        assert_eq!(Environment::from_str("PROD").unwrap(), Environment::Prod);
+        assert!(Environment::from_str("staging").is_err());
+    }
+
+    #[test]
+    fn default_config_is_dev_friendly() {
+        let config = AppConfig::default();
+        assert_eq!(config.env, Environment::Dev);
+        assert!(config.auth_dev_mode);
+        assert!(config.rate_limit_enabled);
+    }
+}

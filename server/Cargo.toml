@@ -1,0 +1,22 @@
+[package]
+name = "intimeui-server"
+version.workspace = true
+edition.workspace = true
+description = "InTimeUI backend service — API gateway & service base (M0)"
+publish = false
+
+[dependencies]
+axum = "0.8"
+dotenvy = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "net"] }
+tower-http = { version = "0.6", features = ["trace", "request-id", "catch-panic"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+validator = { version = "0.18", features = ["derive"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
