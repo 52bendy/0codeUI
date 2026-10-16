@@ -159,7 +159,8 @@ fn resolve_key(req: &Request) -> String {
         }
     }
     if let Some(connect_info) = req.extensions().get::<ConnectInfo<SocketAddr>>() {
-        return format!("ip:{}", connect_info.0);
+        // 仅取 IP（不含源端口），避免同一客户端每次新连接各占一个桶。
+        return format!("ip:{}", connect_info.0.ip());
     }
     "anonymous".to_string()
 }
@@ -202,5 +203,15 @@ mod tests {
         assert!(limiter.check_at("a", now));
         assert!(!limiter.check_at("a", now));
         assert!(limiter.check_at("b", now));
+    }
+
+    #[test]
+    fn connect_info_key_uses_ip_without_port() {
+        use axum::body::Body;
+
+        let mut req = Request::builder().uri("/").body(Body::empty()).unwrap();
+        req.extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 54321))));
+        assert_eq!(resolve_key(&req), "ip:127.0.0.1");
     }
 }
