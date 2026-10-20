@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::config::AppConfig;
+use crate::db::Db;
 use crate::middleware::rate_limit::RateLimiter;
 
 /// 全局共享状态。
@@ -13,13 +14,15 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     /// 基础限流器。
     pub rate_limiter: Arc<RateLimiter>,
+    /// 数据库句柄。
+    pub db: Arc<Db>,
     /// 进程启动时间（用于健康检查 uptime）。
     pub started_at: Instant,
 }
 
 impl AppState {
-    /// 基于配置构造共享状态。
-    pub fn new(config: AppConfig) -> Self {
+    /// 基于配置与数据库句柄构造共享状态。
+    pub fn new(config: AppConfig, db: Db) -> Self {
         let rate_limiter = RateLimiter::new(
             config.rate_limit_rps,
             config.rate_limit_burst,
@@ -28,6 +31,7 @@ impl AppState {
         Self {
             config: Arc::new(config),
             rate_limiter: Arc::new(rate_limiter),
+            db: Arc::new(db),
             started_at: Instant::now(),
         }
     }

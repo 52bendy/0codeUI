@@ -17,6 +17,7 @@ User=intimeui
 Group=intimeui
 WorkingDirectory=/opt/intimeui
 EnvironmentFile=/etc/intimeui/intimeui.env
+Environment=DATABASE_URL=sqlite:///opt/intimeui/data/intimeui.db
 ExecStart=/usr/local/bin/intimeui-server
 Restart=on-failure
 RestartSec=3
@@ -24,6 +25,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+ReadWritePaths=/opt/intimeui/data
 LimitNOFILE=65536
 
 [Install]

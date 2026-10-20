@@ -26,6 +26,8 @@ pub enum ErrorCode {
     Forbidden = 40300,
     /// 资源不存在（HTTP 404）。
     NotFound = 40400,
+    /// 资源冲突（HTTP 409，如唯一键重复）。
+    Conflict = 40900,
     /// 触发限流（HTTP 429）。
     RateLimited = 42900,
     /// 服务内部错误（HTTP 500）。
@@ -50,6 +52,7 @@ impl ErrorCode {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Conflict => StatusCode::CONFLICT,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             Self::ServiceUnavailable => StatusCode::SERVICE_UNAVAILABLE,
@@ -65,6 +68,7 @@ impl ErrorCode {
             Self::Unauthorized => "unauthorized",
             Self::Forbidden => "forbidden",
             Self::NotFound => "not found",
+            Self::Conflict => "conflict",
             Self::RateLimited => "too many requests",
             Self::Internal => "internal server error",
             Self::ServiceUnavailable => "service unavailable",
@@ -205,6 +209,7 @@ mod tests {
         );
         assert_eq!(ErrorCode::Forbidden.http_status(), StatusCode::FORBIDDEN);
         assert_eq!(ErrorCode::NotFound.http_status(), StatusCode::NOT_FOUND);
+        assert_eq!(ErrorCode::Conflict.http_status(), StatusCode::CONFLICT);
         assert_eq!(
             ErrorCode::RateLimited.http_status(),
             StatusCode::TOO_MANY_REQUESTS
@@ -226,6 +231,7 @@ mod tests {
         assert_eq!(ErrorCode::Unauthorized.as_i32(), 40100);
         assert_eq!(ErrorCode::Forbidden.as_i32(), 40300);
         assert_eq!(ErrorCode::NotFound.as_i32(), 40400);
+        assert_eq!(ErrorCode::Conflict.as_i32(), 40900);
         assert_eq!(ErrorCode::RateLimited.as_i32(), 42900);
         assert_eq!(ErrorCode::Internal.as_i32(), 50000);
         assert_eq!(ErrorCode::Timeout.as_i32(), 50400);

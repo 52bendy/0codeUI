@@ -1,11 +1,13 @@
 //! 路由注册。
 //!
 //! - 公开路由：`/`、`/healthz`、`/readyz`、`/api/v1/ping`；
-//! - 受保护路由（需鉴权）：`/api/v1/me`、`/api/v1/echo`；
+//! - 受保护路由（需鉴权）：`/api/v1/me`、`/api/v1/echo`、
+//!   `/api/v1/orders/{order_id}/business-data`、`/api/v1/users/{user_id}/balance`；
 //! - 未匹配路径统一返回 404 响应结构。
 
 pub mod example;
 pub mod health;
+pub mod orders;
 
 use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post};
@@ -20,12 +22,17 @@ pub fn router(state: AppState) -> Router {
     let public_routes = Router::new()
         .route("/", get(example::root))
         .route("/healthz", get(health::healthz))
-        .route("/readyz", get(health::healthz))
+        .route("/readyz", get(health::readyz))
         .route("/api/v1/ping", get(example::ping));
 
     let protected_routes = Router::new()
         .route("/api/v1/me", get(example::me))
         .route("/api/v1/echo", post(example::echo))
+        .route(
+            "/api/v1/orders/{order_id}/business-data",
+            get(orders::order_business_data),
+        )
+        .route("/api/v1/users/{user_id}/balance", get(orders::user_balance))
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
     Router::new()

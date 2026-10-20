@@ -3,6 +3,7 @@
 use std::process::ExitCode;
 
 use intimeui_server::config::AppConfig;
+use intimeui_server::db::Db;
 use intimeui_server::state::AppState;
 use intimeui_server::{build_app, telemetry};
 
@@ -23,7 +24,21 @@ async fn main() -> ExitCode {
 
     let host = config.host.clone();
     let port = config.port;
-    let state = AppState::new(config);
+
+    let db = match Db::connect(&config.database_url).await {
+        Ok(db) => db,
+        Err(error) => {
+            tracing::error!(error = %error, "failed to connect database");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(error) = db.migrate().await {
+        tracing::error!(error = %error, "failed to run database migrations");
+        return ExitCode::FAILURE;
+    }
+    tracing::info!(database_url = %config.database_url, "database ready");
+
+    let state = AppState::new(config, db);
     let app = build_app(state);
 
     let listener = match tokio::net::TcpListener::bind((host.as_str(), port)).await {

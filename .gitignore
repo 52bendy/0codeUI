@@ -5,3 +5,9 @@
 !.env.example
 *.log
 .DS_Store
+
+# 本地 SQLite 数据库（迁移与种子数据可重建，不入仓）
+/data/
+*.db
+*.db-shm
+*.db-wal

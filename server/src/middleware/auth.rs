@@ -83,7 +83,7 @@ mod tests {
     use super::*;
     use crate::config::AppConfig;
 
-    fn state_with(dev_mode: bool, tokens: &[(&str, &str)]) -> AppState {
+    async fn state_with(dev_mode: bool, tokens: &[(&str, &str)]) -> AppState {
         let config = AppConfig {
             auth_dev_mode: dev_mode,
             auth_static_tokens: tokens
@@ -92,12 +92,13 @@ mod tests {
                 .collect(),
             ..AppConfig::default()
         };
-        AppState::new(config)
+        let db = crate::db::Db::connect_in_memory().await.unwrap();
+        AppState::new(config, db)
     }
 
-    #[test]
-    fn dev_mode_accepts_dev_tokens() {
-        let state = state_with(true, &[]);
+    #[tokio::test]
+    async fn dev_mode_accepts_dev_tokens() {
+        let state = state_with(true, &[]).await;
         assert_eq!(
             resolve_user_id(&state, "dev:1001"),
             Some("1001".to_string())
@@ -106,9 +107,9 @@ mod tests {
         assert_eq!(resolve_user_id(&state, "plain"), None);
     }
 
-    #[test]
-    fn static_tokens_resolve_and_dev_tokens_rejected_when_disabled() {
-        let state = state_with(false, &[("tok-a", "u42")]);
+    #[tokio::test]
+    async fn static_tokens_resolve_and_dev_tokens_rejected_when_disabled() {
+        let state = state_with(false, &[("tok-a", "u42")]).await;
         assert_eq!(resolve_user_id(&state, "tok-a"), Some("u42".to_string()));
         assert_eq!(resolve_user_id(&state, "nope"), None);
         assert_eq!(resolve_user_id(&state, "dev:1"), None);

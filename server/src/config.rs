@@ -102,6 +102,8 @@ pub struct AppConfig {
     pub rate_limit_burst: u32,
     /// 请求处理超时秒数：`REQUEST_TIMEOUT_SECS`（默认 30）。
     pub request_timeout_secs: u64,
+    /// 数据库连接串：`DATABASE_URL`（默认 `sqlite://data/intimeui.db`）。
+    pub database_url: String,
 }
 
 impl AppConfig {
@@ -176,6 +178,7 @@ impl AppConfig {
                 message: "must be >= 1".to_string(),
             });
         }
+        let database_url = env_string("DATABASE_URL", "sqlite://data/intimeui.db");
 
         Ok(Self {
             env,
@@ -189,6 +192,7 @@ impl AppConfig {
             rate_limit_rps,
             rate_limit_burst,
             request_timeout_secs,
+            database_url,
         })
     }
 }
@@ -208,6 +212,7 @@ impl Default for AppConfig {
             rate_limit_rps: 50.0,
             rate_limit_burst: 100,
             request_timeout_secs: 30,
+            database_url: "sqlite://data/intimeui.db".to_string(),
         }
     }
 }

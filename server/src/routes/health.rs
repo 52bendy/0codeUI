@@ -4,13 +4,14 @@ use axum::extract::State;
 use axum::Json;
 use serde::Serialize;
 
+use crate::error::{AppError, ErrorCode};
 use crate::response::ApiResponse;
 use crate::state::AppState;
 
 /// 健康检查响应数据。
 #[derive(Debug, Serialize)]
 pub struct HealthData {
-    /// 固定为 `ok`（存活即健康；后续可扩展依赖探测）。
+    /// 固定为 `ok`（存活即健康）。
     pub status: &'static str,
     /// 服务名。
     pub service: &'static str,
@@ -20,9 +21,12 @@ pub struct HealthData {
     pub env: String,
     /// 已运行秒数。
     pub uptime_secs: u64,
+    /// 数据库探测结果（仅 `/readyz` 返回）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<&'static str>,
 }
 
-/// `GET /healthz`、`GET /readyz`：存活 / 就绪检查（无需鉴权、不限流）。
+/// `GET /healthz`：存活检查（无需鉴权、不限流）。
 pub async fn healthz(State(state): State<AppState>) -> Json<ApiResponse<HealthData>> {
     Json(ApiResponse::success(HealthData {
         status: "ok",
@@ -30,5 +34,28 @@ pub async fn healthz(State(state): State<AppState>) -> Json<ApiResponse<HealthDa
         version: env!("CARGO_PKG_VERSION"),
         env: state.config.env.as_str().to_string(),
         uptime_secs: state.uptime_secs(),
+        database: None,
     }))
+}
+
+/// `GET /readyz`：就绪检查（含数据库 `SELECT 1`）。
+pub async fn readyz(
+    State(state): State<AppState>,
+) -> Result<Json<ApiResponse<HealthData>>, AppError> {
+    if let Err(error) = state.db.ping().await {
+        tracing::error!(error = %error, "database readiness check failed");
+        return Err(AppError::new(
+            ErrorCode::ServiceUnavailable,
+            "database unavailable",
+        ));
+    }
+
+    Ok(Json(ApiResponse::success(HealthData {
+        status: "ok",
+        service: env!("CARGO_PKG_NAME"),
+        version: env!("CARGO_PKG_VERSION"),
+        env: state.config.env.as_str().to_string(),
+        uptime_secs: state.uptime_secs(),
+        database: Some("ok"),
+    })))
 }

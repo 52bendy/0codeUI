@@ -2,7 +2,10 @@
 //!
 //! 模块划分：
 //! - [`config`]：环境变量配置与密钥注入；
+//! - [`db`]：SQLite 连接池、迁移与种子数据；
 //! - [`error`]：全局错误码规范与错误类型；
+//! - [`models`]：核心业务领域模型；
+//! - [`repository`]：数据访问层与原子能力实现；
 //! - [`response`]：统一响应结构 `{code, msg, data}`；
 //! - [`middleware`]：鉴权 / 限流 / 超时中间件；
 //! - [`routes`]：路由注册与端点实现；
@@ -11,8 +14,11 @@
 //! - [`validation`]：请求参数校验提取器。
 
 pub mod config;
+pub mod db;
 pub mod error;
 pub mod middleware;
+pub mod models;
+pub mod repository;
 pub mod response;
 pub mod routes;
 pub mod state;
