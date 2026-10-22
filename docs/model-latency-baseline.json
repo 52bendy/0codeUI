@@ -1,0 +1,23 @@
+{
+  "generated_at": "2026-10-22T07:52:21.128161566+00:00",
+  "provider": "mock",
+  "primary_model": "Qwen2.5-Coder-7B-Instruct-AWQ",
+  "requests": 100,
+  "concurrency": 4,
+  "success": 100,
+  "failures": 0,
+  "html_valid": 100,
+  "latency_ms": {
+    "min": 5.242,
+    "mean": 6.389,
+    "p50": 6.483,
+    "p95": 6.842,
+    "p99": 7.041,
+    "max": 7.049
+  },
+  "throughput_rps": 593.678,
+  "input_tokens": 17100,
+  "output_tokens": 65500,
+  "estimated_cost_usd": 0.0,
+  "note": "html_valid 由网关的单文件 HTML 校验得出；mock 数据仅用于验证测量链路，真实模型基线需在 24GB GPU 环境运行。"
+}
