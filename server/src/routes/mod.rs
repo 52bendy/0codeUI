@@ -3,7 +3,8 @@
 //! - 公开路由：`/`、`/healthz`、`/readyz`、`/api/v1/ping`；
 //! - 受保护路由（需鉴权）：`/api/v1/me`、`/api/v1/echo`、
 //!   `/api/v1/orders/{order_id}/business-data`、`/api/v1/users/{user_id}/balance`、
-//!   `/api/v1/ui/generate`；
+//!   `/api/v1/telemetry/survey`、`/api/v1/telemetry/surveys`、
+//!   `/api/v1/telemetry/surveys/aggregate`、`/api/v1/ui/generate`；
 //! - 未匹配路径统一返回 404 响应结构。
 
 pub mod example;
@@ -11,6 +12,7 @@ pub mod health;
 pub mod model;
 pub mod orders;
 pub mod profiles;
+pub mod telemetry_survey;
 pub mod ui;
 pub mod ui_render;
 
@@ -38,6 +40,18 @@ pub fn router(state: AppState) -> Router {
             get(orders::order_business_data),
         )
         .route("/api/v1/users/{user_id}/balance", get(orders::user_balance))
+        .route(
+            "/api/v1/telemetry/survey",
+            post(telemetry_survey::submit_survey),
+        )
+        .route(
+            "/api/v1/telemetry/surveys",
+            get(telemetry_survey::list_surveys),
+        )
+        .route(
+            "/api/v1/telemetry/surveys/aggregate",
+            get(telemetry_survey::aggregate_surveys),
+        )
         .route("/api/v1/ui/generate", post(ui::generate))
         .route("/api/v1/ui/render", post(ui_render::render_ui))
         .route("/api/v1/ui/model/generate", post(model::generate))
