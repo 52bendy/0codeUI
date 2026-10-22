@@ -20,6 +20,7 @@ pub mod error;
 pub mod html_validator;
 pub mod middleware;
 pub mod models;
+pub mod obfuscation;
 pub mod repository;
 pub mod response;
 pub mod routes;

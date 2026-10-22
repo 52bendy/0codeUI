@@ -3,13 +3,14 @@
 //! - 公开路由：`/`、`/healthz`、`/readyz`、`/api/v1/ping`；
 //! - 受保护路由（需鉴权）：`/api/v1/me`、`/api/v1/echo`、
 //!   `/api/v1/orders/{order_id}/business-data`、`/api/v1/users/{user_id}/balance`、
-//!   `/api/v1/ui/generate`；
+//!   `/api/v1/ui/generate`、`/api/v1/ui/render`、`/api/v1/ui/obfuscate`；
 //! - 未匹配路径统一返回 404 响应结构。
 
 pub mod example;
 pub mod health;
 pub mod orders;
 pub mod ui;
+pub mod ui_obfuscate;
 pub mod ui_render;
 
 use axum::middleware::from_fn_with_state;
@@ -38,6 +39,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/users/{user_id}/balance", get(orders::user_balance))
         .route("/api/v1/ui/generate", post(ui::generate))
         .route("/api/v1/ui/render", post(ui_render::render_ui))
+        .route("/api/v1/ui/obfuscate", post(ui_obfuscate::obfuscate))
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
     Router::new()

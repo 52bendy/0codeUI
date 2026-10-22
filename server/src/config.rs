@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
+use crate::obfuscation::{ObfuscationConfig, ObfuscationLevel};
+
 /// 运行环境。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
@@ -104,6 +106,16 @@ pub struct AppConfig {
     pub request_timeout_secs: u64,
     /// 数据库连接串：`DATABASE_URL`（默认 `sqlite://data/intimeui.db`）。
     pub database_url: String,
+    /// 是否启用输出混淆：`UI_OBFUSCATION_ENABLED`（默认 true）。
+    pub ui_obfuscation_enabled: bool,
+    /// 混淆强度：`UI_OBFUSCATION_LEVEL`（off / basic / standard / aggressive，默认 standard）。
+    pub ui_obfuscation_level: ObfuscationLevel,
+    /// 会话类名映射表 TTL：`UI_OBFUSCATION_SESSION_TTL_SECS`（默认 1800）。
+    pub ui_obfuscation_session_ttl_secs: u64,
+    /// 会话映射表容量：`UI_OBFUSCATION_MAX_SESSIONS`（默认 1000）。
+    pub ui_obfuscation_max_sessions: usize,
+    /// 非保留标识符覆盖率下限：`UI_OBFUSCATION_MIN_IDENTIFIER_COVERAGE`（默认 0.8）。
+    pub ui_obfuscation_min_identifier_coverage: f64,
 }
 
 impl AppConfig {
@@ -180,6 +192,41 @@ impl AppConfig {
         }
         let database_url = env_string("DATABASE_URL", "sqlite://data/intimeui.db");
 
+        let ui_obfuscation_enabled = match optional_env("UI_OBFUSCATION_ENABLED") {
+            Some(value) => parse_bool("UI_OBFUSCATION_ENABLED", &value)?,
+            None => true,
+        };
+        let ui_obfuscation_level = match optional_env("UI_OBFUSCATION_LEVEL") {
+            Some(value) => ObfuscationLevel::from_str(&value).map_err(|message| ConfigError {
+                key: "UI_OBFUSCATION_LEVEL",
+                message,
+            })?,
+            None => ObfuscationLevel::Standard,
+        };
+        let ui_obfuscation_session_ttl_secs =
+            env_parse("UI_OBFUSCATION_SESSION_TTL_SECS", 1800u64)?;
+        if ui_obfuscation_session_ttl_secs == 0 {
+            return Err(ConfigError {
+                key: "UI_OBFUSCATION_SESSION_TTL_SECS",
+                message: "must be >= 1".to_string(),
+            });
+        }
+        let ui_obfuscation_max_sessions = env_parse("UI_OBFUSCATION_MAX_SESSIONS", 1000usize)?;
+        if ui_obfuscation_max_sessions == 0 {
+            return Err(ConfigError {
+                key: "UI_OBFUSCATION_MAX_SESSIONS",
+                message: "must be >= 1".to_string(),
+            });
+        }
+        let ui_obfuscation_min_identifier_coverage =
+            env_parse("UI_OBFUSCATION_MIN_IDENTIFIER_COVERAGE", 0.8f64)?;
+        if !(0.0..=1.0).contains(&ui_obfuscation_min_identifier_coverage) {
+            return Err(ConfigError {
+                key: "UI_OBFUSCATION_MIN_IDENTIFIER_COVERAGE",
+                message: "must be within 0.0..=1.0".to_string(),
+            });
+        }
+
         Ok(Self {
             env,
             host,
@@ -193,7 +240,28 @@ impl AppConfig {
             rate_limit_burst,
             request_timeout_secs,
             database_url,
+            ui_obfuscation_enabled,
+            ui_obfuscation_level,
+            ui_obfuscation_session_ttl_secs,
+            ui_obfuscation_max_sessions,
+            ui_obfuscation_min_identifier_coverage,
         })
+    }
+}
+
+impl AppConfig {
+    /// 当前配置对应的输出混淆参数。
+    pub fn obfuscation_config(&self) -> ObfuscationConfig {
+        ObfuscationConfig {
+            level: if self.ui_obfuscation_enabled {
+                self.ui_obfuscation_level
+            } else {
+                ObfuscationLevel::Off
+            },
+            session_ttl_secs: self.ui_obfuscation_session_ttl_secs,
+            max_sessions: self.ui_obfuscation_max_sessions,
+            min_identifier_coverage: self.ui_obfuscation_min_identifier_coverage,
+        }
     }
 }
 
@@ -213,6 +281,11 @@ impl Default for AppConfig {
             rate_limit_burst: 100,
             request_timeout_secs: 30,
             database_url: "sqlite://data/intimeui.db".to_string(),
+            ui_obfuscation_enabled: true,
+            ui_obfuscation_level: ObfuscationLevel::Standard,
+            ui_obfuscation_session_ttl_secs: 1800,
+            ui_obfuscation_max_sessions: 1000,
+            ui_obfuscation_min_identifier_coverage: 0.8,
         }
     }
 }
