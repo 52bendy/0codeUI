@@ -104,6 +104,14 @@ pub struct AppConfig {
     pub request_timeout_secs: u64,
     /// 数据库连接串：`DATABASE_URL`（默认 `sqlite://data/intimeui.db`）。
     pub database_url: String,
+    /// 画像 EWMA 基础平滑系数：`PROFILE_EWMA_ALPHA`（默认 0.15）。
+    pub profile_ewma_alpha: f64,
+    /// 画像 EWMA 平滑系数上限：`PROFILE_MAX_ALPHA`（默认 0.6）。
+    pub profile_max_alpha: f64,
+    /// 画像两次自动更新的最小间隔秒数：`PROFILE_MIN_UPDATE_INTERVAL_SECS`（默认 60）。
+    pub profile_min_update_interval_secs: u64,
+    /// 单次画像刷新最多处理的样本数：`PROFILE_MAX_OBSERVATIONS`（默认 1000）。
+    pub profile_max_observations: usize,
 }
 
 impl AppConfig {
@@ -180,6 +188,36 @@ impl AppConfig {
         }
         let database_url = env_string("DATABASE_URL", "sqlite://data/intimeui.db");
 
+        let profile_ewma_alpha = env_parse("PROFILE_EWMA_ALPHA", 0.15f64)?;
+        if !(profile_ewma_alpha.is_finite()
+            && profile_ewma_alpha > 0.0
+            && profile_ewma_alpha <= 1.0)
+        {
+            return Err(ConfigError {
+                key: "PROFILE_EWMA_ALPHA",
+                message: "must be in (0, 1]".to_string(),
+            });
+        }
+        let profile_max_alpha = env_parse("PROFILE_MAX_ALPHA", 0.6f64)?;
+        if !(profile_max_alpha.is_finite()
+            && profile_max_alpha >= profile_ewma_alpha
+            && profile_max_alpha <= 1.0)
+        {
+            return Err(ConfigError {
+                key: "PROFILE_MAX_ALPHA",
+                message: "must be in [PROFILE_EWMA_ALPHA, 1]".to_string(),
+            });
+        }
+        let profile_min_update_interval_secs =
+            env_parse("PROFILE_MIN_UPDATE_INTERVAL_SECS", 60u64)?;
+        let profile_max_observations = env_parse("PROFILE_MAX_OBSERVATIONS", 1000usize)?;
+        if !(1..=10_000).contains(&profile_max_observations) {
+            return Err(ConfigError {
+                key: "PROFILE_MAX_OBSERVATIONS",
+                message: "must be in 1..=10000".to_string(),
+            });
+        }
+
         Ok(Self {
             env,
             host,
@@ -193,6 +231,10 @@ impl AppConfig {
             rate_limit_burst,
             request_timeout_secs,
             database_url,
+            profile_ewma_alpha,
+            profile_max_alpha,
+            profile_min_update_interval_secs,
+            profile_max_observations,
         })
     }
 }
@@ -213,6 +255,10 @@ impl Default for AppConfig {
             rate_limit_burst: 100,
             request_timeout_secs: 30,
             database_url: "sqlite://data/intimeui.db".to_string(),
+            profile_ewma_alpha: 0.15,
+            profile_max_alpha: 0.6,
+            profile_min_update_interval_secs: 60,
+            profile_max_observations: 1000,
         }
     }
 }
