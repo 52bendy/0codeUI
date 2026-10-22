@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-intimeui-page="ORDER_DETAIL_PAGE" data-intimeui-entity="ORD_20261014_001">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<title>InTimeUI · 订单详情</title>
+<style>
+  :root {
+    --bg: #f4f3ef;
+    --surface: #fbfaf7;
+    --ink: #111111;
+    --muted: #6b6b66;
+    --line: #d8d6cf;
+    --accent: #111111;
+    --accent-ink: #f7f6f2;
+    --danger: #7a2e2e;
+    --success: #2f5d3a;
+    --shadow: 0 24px 60px rgba(17, 17, 17, 0.12);
+    --radius: 2px;
+    --font-sans: "Helvetica Neue", "PingFang SC", "Noto Sans SC", sans-serif;
+    --font-serif: "Iowan Old Style", "Palatino Linotype", "Songti SC", serif;
+    --font-mono: "SFMono-Regular", "Roboto Mono", "Menlo", monospace;
+  }
+
+  [data-theme="dark"] {
+    --bg: #0c0c0c;
+    --surface: #141412;
+    --ink: #f2f1ec;
+    --muted: #9a9993;
+    --line: #2a2a28;
+    --accent: #f2f1ec;
+    --accent-ink: #111111;
+    --danger: #c98b8b;
+    --success: #8fbf9a;
+    --shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    min-height: 100vh;
+    background:
+      radial-gradient(1200px 600px at 85% -10%, rgba(17, 17, 17, 0.06), transparent 60%),
+      radial-gradient(900px 500px at -10% 30%, rgba(17, 17, 17, 0.04), transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    transition: background-color 240ms ease, color 240ms ease;
+  }
+
+  [data-theme="dark"] body {
+    background:
+      radial-gradient(1200px 600px at 85% -10%, rgba(242, 241, 236, 0.05), transparent 60%),
+      radial-gradient(900px 500px at -10% 30%, rgba(242, 241, 236, 0.03), transparent 55%),
+      var(--bg);
+  }
+
+  button { font: inherit; color: inherit; }
+
+  .shell {
+    width: min(100%, 760px);
+    margin: 0 auto;
+    padding: 22px 22px 120px;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 28px;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.22em;
+  }
+
+  .brand-mark {
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--ink);
+    font-size: 10px;
+    letter-spacing: 0;
+  }
+
+  .brand-slash { color: var(--muted); }
+
+  .theme-toggle {
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: var(--surface);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease;
+  }
+
+  .theme-toggle:hover { transform: rotate(18deg); border-color: var(--ink); }
+  .theme-toggle:active { transform: scale(0.94); }
+  .theme-toggle:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+  .eyebrow-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+  }
+
+  .status-pill {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    color: var(--success);
+    border: 1px solid currentColor;
+    padding: 5px 9px;
+  }
+
+  .hero {
+    padding: 34px 0 26px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .hero-kicker {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: var(--muted);
+    margin-bottom: 18px;
+  }
+
+  .headline {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: clamp(56px, 15vw, 96px);
+    line-height: 0.88;
+    letter-spacing: -0.045em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .headline-amount {
+    display: block;
+    margin-top: 14px;
+    font-size: clamp(42px, 11vw, 68px);
+    color: var(--ink);
+  }
+
+  .headline-amount .currency {
+    font-size: 0.38em;
+    vertical-align: 0.55em;
+    letter-spacing: 0.02em;
+    margin-right: 6px;
+    color: var(--muted);
+  }
+
+  .lede {
+    margin: 18px 0 0;
+    font-size: 14px;
+    color: var(--muted);
+    letter-spacing: 0.01em;
+  }
+
+  .meta {
+    display: grid;
+    gap: 0;
+    padding: 8px 0 0;
+  }
+
+  .meta-row {
+    display: grid;
+    grid-template-columns: 108px 1fr;
+    gap: 18px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--line);
+    align-items: baseline;
+  }
+
+  .meta-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    color: var(--muted);
+  }
+
+  .meta-value {
+    font-size: 15px;
+    line-height: 1.55;
+    word-break: break-word;
+  }
+
+  .meta-value.mono {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+  }
+
+  .actions {
+    position: sticky;
+    bottom: 0;
+    display: grid;
+    gap: 10px;
+    margin: 26px -22px 0;
+    padding: 18px 22px calc(18px + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(18px);
+    border-top: 1px solid var(--line);
+  }
+
+  @supports not (background: color-mix(in srgb, red, blue)) {
+    .actions { background: var(--bg); }
+  }
+
+  .action {
+    width: 100%;
+    min-height: 50px;
+    padding: 14px 18px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 15px;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: transform 150ms ease, background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+  }
+
+  .action:hover { border-color: var(--ink); transform: translateY(-1px); }
+  .action:active { transform: translateY(1px); }
+  .action:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+  .action.primary {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-color: var(--accent);
+  }
+
+  .action.primary:hover { opacity: 0.9; }
+
+  .action.danger {
+    border-color: transparent;
+    background: transparent;
+    color: var(--danger);
+    min-height: 40px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+  }
+
+  .action.danger:hover { border-color: var(--danger); }
+
+  .receipt {
+    margin-top: 28px;
+    padding: 22px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 240ms ease, transform 240ms ease;
+  }
+
+  .receipt.visible { opacity: 1; transform: translateY(0); }
+
+  .receipt-title {
+    margin: 0 0 14px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+  }
+
+  .receipt-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+  }
+
+  .receipt-row:last-child { border-bottom: 0; }
+
+  .receipt-key { color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+  .receipt-value { text-align: right; word-break: break-word; }
+
+  .footer {
+    padding-top: 36px;
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(96px + env(safe-area-inset-bottom));
+    transform: translate(-50%, 16px);
+    max-width: calc(100% - 44px);
+    padding: 12px 16px;
+    background: var(--ink);
+    color: var(--bg);
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease, transform 180ms ease;
+    z-index: 20;
+  }
+
+  .toast.visible { opacity: 1; transform: translate(-50%, 0); }
+
+  .mock-confirm {
+    margin-top: 12px;
+    padding: 16px;
+    border: 1px dashed var(--line);
+  }
+
+  .mock-confirm p { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+
+  .mock-actions { display: flex; gap: 10px; }
+
+  .mock-actions .action { min-height: 42px; font-size: 13px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .shell { padding-left: 18px; padding-right: 18px; }
+    .actions { margin-left: -18px; margin-right: -18px; padding-left: 18px; padding-right: 18px; }
+    .meta-row { grid-template-columns: 92px 1fr; gap: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="topbar">
+    <div class="brand" aria-label="InTimeUI">
+      <span class="brand-mark">IN</span>
+      <span class="brand-slash">/</span>
+      <span>TIME</span>
+    </div>
+    <button id="themeToggle" class="theme-toggle" type="button" aria-label="切换明暗主题" aria-pressed="false">◐</button>
+  </header>
+
+  <main>
+    <section class="eyebrow-row" aria-label="订单状态">
+      <span class="eyebrow" data-i18n="eyebrow"></span>
+      <span class="status-pill" data-i18n="status"></span>
+    </section>
+
+    <section class="hero">
+      <div class="hero-kicker" data-i18n="kicker"></div>
+      <h1 class="headline">
+        <span data-i18n="titleLine1"></span>
+        <span class="headline-amount"><span class="currency">CNY</span><span data-i18n="amount"></span></span>
+      </h1>
+      <p class="lede" data-i18n="itemMeta"></p>
+    </section>
+
+    <section class="meta" aria-label="订单信息">
+      <div class="meta-row">
+        <span class="meta-label" data-i18n="addressLabel"></span>
+        <span class="meta-value" data-i18n="addressValue"></span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-label" data-i18n="orderLabel"></span>
+        <span class="meta-value mono" data-i18n="orderValue"></span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-label" data-i18n="paymentLabel"></span>
+        <span class="meta-value" data-i18n="paymentValue"></span>
+      </div>
+    </section>
+
+    <section id="receipt" class="receipt" aria-live="polite" hidden>
+      <h2 class="receipt-title" data-i18n="receiptTitle"></h2>
+      <div id="receiptRows"></div>
+    </section>
+
+    <section class="actions" aria-label="订单操作">
+      <button class="action primary" type="button" data-intimeui-action="update_order_address" data-intimeui-target="btn_save_address" data-i18n="actionAddress"></button>
+      <button class="action" type="button" data-intimeui-action="query_user_balance" data-intimeui-target="btn_balance" data-i18n="actionBalance"></button>
+      <button class="action danger" type="button" data-intimeui-action="delete_record" data-intimeui-target="btn_delete_order" data-i18n="actionDelete"></button>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>IN/TIME · M7</span>
+    <span data-i18n="footerNote"></span>
+  </footer>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var I18N = {
+    zh: {
+      eyebrow: "ORDER / 2026—10—14",
+      status: "已支付",
+      kicker: "订单详情 · 单文件渲染",
+      titleLine1: "订单",
+      amount: "299.00",
+      itemMeta: "智能降噪耳机 · 数量 1 · 含税",
+      addressLabel: "收货地址",
+      addressValue: "北京市朝阳区望京街道 1 号",
+      orderLabel: "订单编号",
+      orderValue: "ORD_20261014_001",
+      paymentLabel: "支付方式",
+      paymentValue: "企业账户 · 已结算",
+      receiptTitle: "执行回执 / RECEIPT",
+      actionAddress: "修改收货地址",
+      actionBalance: "查询账户余额",
+      actionDelete: "删除订单",
+      footerNote: "动态界面 · 原生桥接",
+      toastWrite: "确认卡片已收到，请在底部完成确认。",
+      toastRead: "正在查询账户余额…",
+      toastDelete: "删除操作需要二次确认。",
+      toastError: "操作没有完成，请稍后重试。",
+      mockCard: "演示模式：确认卡片已生成。",
+      mockConfirm: "模拟确认",
+      mockCancel: "取消",
+      mockExecuted: "已执行（演示）",
+      mockRejected: "已取消（演示）",
+      balance: "账户余额",
+      statusExecuted: "EXECUTED",
+      statusRejected: "REJECTED"
+    }
+  };
+
+  var locale = "zh";
+
+  function t(key) {
+    return (I18N[locale] && I18N[locale][key]) || key;
+  }
+
+  function applyCopy() {
+    var nodes = document.querySelectorAll("[data-i18n]");
+    for (var index = 0; index < nodes.length; index++) {
+      var key = nodes[index].getAttribute("data-i18n");
+      nodes[index].textContent = t(key);
+    }
+  }
+
+  var themeToggle = document.getElementById("themeToggle");
+
+  function applyTheme(theme, notifyNative) {
+    document.documentElement.setAttribute("data-theme", theme);
+    themeToggle.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+    try { localStorage.setItem("intimeui.theme", theme); } catch (error) { /* private mode */ }
+    if (notifyNative && window.IntimeUI && typeof window.IntimeUI.setTheme === "function") {
+      window.IntimeUI.setTheme(theme);
+    }
+  }
+
+  var stored = null;
+  try { stored = localStorage.getItem("intimeui.theme"); } catch (error) { stored = null; }
+  applyTheme(stored || "light", false);
+
+  if (window.IntimeUI) {
+    window.IntimeUI.onTheme = function (theme) {
+      applyTheme(theme === "dark" ? "dark" : "light", false);
+    };
+  }
+
+  themeToggle.addEventListener("click", function () {
+    applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark", true);
+  });
+
+  var toast = document.getElementById("toast");
+  var toastTimer = null;
+
+  function showToast(message) {
+    toast.textContent = message;
+    toast.classList.add("visible");
+    if (toastTimer) { clearTimeout(toastTimer); }
+    toastTimer = setTimeout(function () { toast.classList.remove("visible"); }, 2600);
+  }
+
+  var receipt = document.getElementById("receipt");
+  var receiptRows = document.getElementById("receiptRows");
+
+  function showReceipt(title, rows) {
+    receiptRows.textContent = "";
+    for (var index = 0; index < rows.length; index++) {
+      var row = document.createElement("div");
+      row.className = "receipt-row";
+      var key = document.createElement("span");
+      key.className = "receipt-key";
+      key.textContent = rows[index][0];
+      var value = document.createElement("span");
+      value.className = "receipt-value";
+      value.textContent = rows[index][1];
+      row.appendChild(key);
+      row.appendChild(value);
+      receiptRows.appendChild(row);
+    }
+    var heading = receipt.querySelector(".receipt-title");
+    heading.textContent = title;
+    receipt.hidden = false;
+    requestAnimationFrame(function () { receipt.classList.add("visible"); });
+  }
+
+  function showReceiptFromResult(result) {
+    var rows = [];
+    var results = result && result.execution_results ? result.execution_results : [];
+    for (var index = 0; index < results.length; index++) {
+      var item = results[index] || {};
+      rows.push([item.target_capability || "action", item.status || "UNKNOWN"]);
+    }
+    if (!rows.length) { rows.push(["status", "EXECUTED"]); }
+    showReceipt(t("receiptTitle"), rows);
+  }
+
+  function hasNative() {
+    return !!(window.IntimeUINative && typeof window.IntimeUINative.postMessage === "function");
+  }
+
+  function simulate(action) {
+    if (action === "query_user_balance") {
+      showToast(t("toastRead"));
+      setTimeout(function () {
+        showReceipt(t("receiptTitle"), [[t("balance"), "CNY 1,288.00"], ["status", t("statusExecuted")]]);
+      }, 480);
+      return;
+    }
+    var deleteAction = action === "delete_record";
+    showToast(deleteAction ? t("toastDelete") : t("toastWrite"));
+    var mock = document.createElement("div");
+    mock.className = "mock-confirm";
+    var copy = document.createElement("p");
+    copy.textContent = t("mockCard");
+    var actions = document.createElement("div");
+    actions.className = "mock-actions";
+    var confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.className = "action primary";
+    confirm.textContent = t("mockConfirm");
+    var cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "action";
+    cancel.textContent = t("mockCancel");
+    confirm.addEventListener("click", function () {
+      mock.remove();
+      showReceipt(t("receiptTitle"), [["status", t("statusExecuted")], ["mode", t("mockExecuted")]]);
+    });
+    cancel.addEventListener("click", function () {
+      mock.remove();
+      showToast(t("mockRejected"));
+    });
+    actions.appendChild(confirm);
+    actions.appendChild(cancel);
+    mock.appendChild(copy);
+    mock.appendChild(actions);
+    receipt.parentNode.insertBefore(mock, receipt);
+  }
+
+  if (!window.IntimeUI) {
+    window.IntimeUI = {
+      triggerIntent: function (action) { simulate(action); },
+      setTheme: function () {},
+      onConfirmation: null,
+      onReceipt: null,
+      onIntentResult: null,
+      onIntentError: null
+    };
+  } else if (!hasNative()) {
+    var originalTrigger = window.IntimeUI.triggerIntent;
+    window.IntimeUI.triggerIntent = function (action, data, target) {
+      if (hasNative()) { return originalTrigger(action, data, target); }
+      simulate(action);
+      return null;
+    };
+  }
+
+  window.IntimeUI.onConfirmation = function () { showToast(t("toastWrite")); };
+  window.IntimeUI.onReceipt = function (receiptPayload) {
+    var rows = [["status", (receiptPayload && receiptPayload.status) || "UNKNOWN"]];
+    var results = receiptPayload && receiptPayload.results ? receiptPayload.results : [];
+    for (var index = 0; index < results.length; index++) {
+      rows.push([results[index].target_capability || "action", results[index].status || "UNKNOWN"]);
+    }
+    showReceipt(t("receiptTitle"), rows);
+  };
+  window.IntimeUI.onIntentResult = function (result) { showReceiptFromResult(result); };
+  window.IntimeUI.onIntentError = function (error) {
+    showToast((error && error.message) || t("toastError"));
+  };
+
+  var buttons = document.querySelectorAll("[data-intimeui-action]");
+  for (var index = 0; index < buttons.length; index++) {
+    buttons[index].addEventListener("click", function (event) {
+      var button = event.currentTarget;
+      var action = button.getAttribute("data-intimeui-action");
+      var data = {order_id: "ORD_20261014_001"};
+      if (action === "update_order_address") {
+        data.new_address = "北京市海淀区中关村南大街 1 号";
+      }
+      window.IntimeUI.triggerIntent(action, data, {
+        id: button.getAttribute("data-intimeui-target"),
+        type: "button"
+      });
+    });
+  }
+
+  applyCopy();
+})();
+</script>
+</body>
+</html>

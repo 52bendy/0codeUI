@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">InTimeUI</string>
+    <string name="header_brand">IN/TIME</string>
+    <string name="header_scene">SCENE / %1$s</string>
+    <string name="theme_toggle_glyph">◐</string>
+    <string name="theme_toggle_description">切换明暗主题</string>
+
+    <string name="render_failed_code">RENDER / FAILED</string>
+    <string name="render_failed_title">页面未能渲染</string>
+    <string name="render_failed_detail">下发的单文件 HTML 没有成功加载。请重试，或检查网络与页面内容。</string>
+    <string name="render_blank_title">页面内容为空</string>
+    <string name="render_blank_detail">容器已加载页面，但没有检测到可展示内容。</string>
+    <string name="render_timeout_title">渲染超时</string>
+    <string name="render_timeout_detail">页面在 12 秒内没有完成渲染，可以重新加载。</string>
+    <string name="render_crashed_title">渲染进程异常</string>
+    <string name="render_crashed_detail">WebView 渲染进程已退出，请重试。</string>
+    <string name="render_retry">重新加载</string>
+
+    <string name="confirm_title">确认操作</string>
+    <string name="confirm_risk_write">WRITE · 写操作</string>
+    <string name="confirm_risk_delete">DELETE · 删除操作</string>
+    <string name="confirm_cancel">取消</string>
+    <string name="confirm_execute">确认执行</string>
+    <string name="confirm_expiry">有效期 %1$02d:%2$02d</string>
+    <string name="confirm_processing">正在提交…</string>
+    <string name="confirm_untitled">待确认操作</string>
+    <string name="confirm_receipt_title">执行回执 · %1$s</string>
+    <string name="confirm_receipt_empty">没有返回动作明细。</string>
+    <string name="confirm_receipt_row">%1$s · %2$s</string>
+    <string name="confirm_param_row">%1$s  %2$s</string>
+    <string name="confirm_receipt_action">动作</string>
+    <string name="confirm_receipt_unknown">UNKNOWN</string>
+    <string name="confirm_close">关闭</string>
+    <string name="confirm_reject_reason">用户取消</string>
+
+    <string name="error_network">网络请求失败，请检查连接后重试。</string>
+    <string name="error_replay">请求被判定为重放，已自动重试仍失败，请重新操作。</string>
+    <string name="error_auth">登录状态无效或权限不足，请重新登录。</string>
+    <string name="error_clock">设备时间与服务器偏差过大，请校准时间后重试。</string>
+    <string name="error_generic">操作没有完成，请稍后重试。</string>
+    <string name="demo_asset_missing">演示页面资源缺失，请检查安装包。</string>
+    <string name="replay_secret_missing">未配置防重放签名密钥，无法调用远程接口。请通过构建参数注入后重试。</string>
+</resources>

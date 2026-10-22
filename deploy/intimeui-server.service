@@ -1,0 +1,32 @@
+# InTimeUI 后端服务 systemd 单元（部署参考）
+#
+# 使用方式：
+#   install -m 644 deploy/intimeui-server.service /etc/systemd/system/
+#   install -d -m 750 /etc/intimeui
+#   install -m 600 .env.example /etc/intimeui/intimeui.env   # 按需填写，含密钥请收紧权限
+#   systemctl daemon-reload && systemctl enable --now intimeui-server
+
+[Unit]
+Description=InTimeUI backend service (intimeui-server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=intimeui
+Group=intimeui
+WorkingDirectory=/opt/intimeui
+EnvironmentFile=/etc/intimeui/intimeui.env
+Environment=DATABASE_URL=sqlite:///opt/intimeui/data/intimeui.db
+ExecStart=/usr/local/bin/intimeui-server
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/intimeui/data
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
