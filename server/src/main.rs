@@ -38,7 +38,13 @@ async fn main() -> ExitCode {
     }
     tracing::info!(database_url = %config.database_url, "database ready");
 
-    let state = AppState::new(config, db);
+    let state = match AppState::try_new(config, db) {
+        Ok(state) => state,
+        Err(error) => {
+            tracing::error!(error = %error, "failed to initialize model gateway");
+            return ExitCode::FAILURE;
+        }
+    };
     let app = build_app(state);
 
     let listener = match tokio::net::TcpListener::bind((host.as_str(), port)).await {

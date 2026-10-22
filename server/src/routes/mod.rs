@@ -8,6 +8,7 @@
 
 pub mod example;
 pub mod health;
+pub mod model;
 pub mod orders;
 pub mod ui;
 pub mod ui_render;
@@ -38,6 +39,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/users/{user_id}/balance", get(orders::user_balance))
         .route("/api/v1/ui/generate", post(ui::generate))
         .route("/api/v1/ui/render", post(ui_render::render_ui))
+        .route("/api/v1/ui/model/generate", post(model::generate))
+        .route("/api/v1/ui/model/stream", post(model::stream))
+        .route("/api/v1/ui/model/info", get(model::info))
+        .route("/api/v1/ui/model/metrics", get(model::metrics))
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
     Router::new()

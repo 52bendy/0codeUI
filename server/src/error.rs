@@ -34,6 +34,8 @@ pub enum ErrorCode {
     RateLimited = 42900,
     /// 服务内部错误（HTTP 500）。
     Internal = 50000,
+    /// 上游服务返回错误（HTTP 502）。
+    BadGateway = 50200,
     /// 服务暂不可用（HTTP 503）。
     ServiceUnavailable = 50300,
     /// 请求处理超时（HTTP 504）。
@@ -58,6 +60,7 @@ impl ErrorCode {
             Self::Conflict => StatusCode::CONFLICT,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::BadGateway => StatusCode::BAD_GATEWAY,
             Self::ServiceUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::Timeout => StatusCode::GATEWAY_TIMEOUT,
         }
@@ -75,6 +78,7 @@ impl ErrorCode {
             Self::Conflict => "conflict",
             Self::RateLimited => "too many requests",
             Self::Internal => "internal server error",
+            Self::BadGateway => "bad gateway",
             Self::ServiceUnavailable => "service unavailable",
             Self::Timeout => "request timeout",
         }
@@ -141,6 +145,13 @@ impl AppError {
     /// 500：内部错误（detail 仅记录日志）。
     pub fn internal(detail: impl std::fmt::Display) -> Self {
         let mut error = Self::new(ErrorCode::Internal, ErrorCode::Internal.default_message());
+        error.detail = Some(detail.to_string());
+        error
+    }
+
+    /// 502：上游服务错误。
+    pub fn bad_gateway(detail: impl std::fmt::Display) -> Self {
+        let mut error = Self::new(ErrorCode::BadGateway, "model upstream error");
         error.detail = Some(detail.to_string());
         error
     }
