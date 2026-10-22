@@ -19,6 +19,7 @@ pub mod error;
 pub mod middleware;
 pub mod models;
 pub mod profile;
+pub mod prompt;
 pub mod repository;
 pub mod response;
 pub mod routes;

@@ -18,6 +18,7 @@
 │   │   ├── db/                 # SQLite 连接池、迁移执行、种子数据
 │   │   ├── models.rs           # 核心业务领域模型（Decimal 金额）
 │   │   ├── profile/            # 用户画像引擎（EWMA / 防抖动 / Prompt 注入）
+│   │   ├── prompt/             # 动态 System Prompt 拼装器（版本化 / 脱敏 / 注入防护）
 │   │   ├── repository/         # 数据访问层 + 原子能力（create_order 等）
 │   │   ├── error.rs            # 全局错误码规范 + AppError
 │   │   ├── response.rs         # 统一响应结构 {code, msg, data}
@@ -27,7 +28,7 @@
 │   │   ├── middleware/         # 鉴权 / 限流 / 超时中间件
 │   │   ├── routes/             # 路由注册与端点
 │   │   └── bin/intimeui-seed.rs # 种子数据一键加载 CLI
-│   └── tests/                  # 集成测试（api.rs / data_model.rs / profile_engine.rs / user_profile.rs）
+│   └── tests/                  # 集成测试（api / data_model / profile_engine / user_profile / prompt_assembler）
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
 ├── deploy/                     # 部署参考（systemd 单元）
 ├── Dockerfile
@@ -45,7 +46,8 @@
   - 健康检查：`/healthz`（存活）、`/readyz`（含数据库探测）；
   - 数据底座：用户 / 商品 / 订单 / 订单项 / 操作记录五张表，版本化迁移 + 幂等种子数据；
   - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）；
-  - 用户画像引擎：EWMA 偏好计算、单步限幅 / 死区 / 更新频率控制、冷启动置信度、Prompt 可注入 JSON（REQ-202610-1176）。
+  - 用户画像引擎：EWMA 偏好计算、单步限幅 / 死区 / 更新频率控制、冷启动置信度、Prompt 可注入 JSON（REQ-202610-1176）；
+  - 动态 System Prompt 拼装器：画像 + 业务数据 + 场景约束 + Few-Shot 的版本化拼装，稳定可复现、敏感字段脱敏、指令注入防护（REQ-202610-1182）。
 
 ### 快速开始（本地）
 
@@ -167,6 +169,27 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 
 完整算法、API 契约与调参说明见 [`docs/user-profile-engine.md`](docs/user-profile-engine.md)。
 
+### 动态 System Prompt 拼装器（REQ-202610-1182）
+
+`PromptAssembler` 把用户画像、`business_data`、场景约束与 Few-Shot 片段拼装为
+版本化、稳定可复现的 System Prompt。核心保证：
+
+- **稳定**：规范化 JSON（递归排序对象键）+ 固定分段顺序 + FNV-1a 指纹，同一输入字节级一致；
+- **安全**：业务数据递归脱敏（密码 / token / 邮箱 / 手机号等），数据区块标签转义，
+  指令与数据严格分离，注入式文本只产生告警、不改变指令；
+- **可测**：纯函数、无时间 / 随机依赖，模板版本 `intimeui.system_prompt@v1`。
+
+```rust
+use intimeui_server::prompt::{builtin_scene_constraints, PromptAssembler};
+
+let scene = builtin_scene_constraints("ORDER_DETAIL_PAGE").expect("scene");
+let assembled = PromptAssembler::assemble(&scene, &profile, &business_data, &few_shots)?;
+// assembled.system_prompt 可直接作为 ChatMessage::system 交给模型网关（REQ-202610-1181）
+```
+
+完整输入输出契约、脱敏字段清单与注入防护说明见
+[`docs/system-prompt-assembler.md`](docs/system-prompt-assembler.md)。
+
 **种子数据一键加载**：
 
 ```bash
@@ -185,6 +208,7 @@ cargo run -p intimeui-server --bin intimeui-seed -- --database-url sqlite://data
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+cargo test -p intimeui-server --test prompt_assembler   # Prompt 拼装器专项
 cargo build --release
 ```
 
