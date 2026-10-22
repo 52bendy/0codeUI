@@ -76,7 +76,7 @@ impl Repository {
         &self.pool
     }
 
-    /// 记录一条原子能力操作审计。
+    /// 记录一条成功的原子能力操作审计。
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn record_operation(
         &self,
@@ -87,11 +87,57 @@ impl Repository {
         request_payload: &str,
         result_payload: &str,
     ) -> Result<(), RepositoryError> {
+        self.insert_operation(
+            capability,
+            actor_user_id,
+            entity_type,
+            entity_id,
+            request_payload,
+            result_payload,
+            "SUCCESS",
+        )
+        .await
+    }
+
+    /// 记录一条失败的原子能力操作审计（参数校验 / 权限 / 执行失败）。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn record_failed_operation(
+        &self,
+        capability: &str,
+        actor_user_id: Option<&str>,
+        entity_type: &str,
+        entity_id: &str,
+        request_payload: &str,
+        result_payload: &str,
+    ) -> Result<(), RepositoryError> {
+        self.insert_operation(
+            capability,
+            actor_user_id,
+            entity_type,
+            entity_id,
+            request_payload,
+            result_payload,
+            "FAILED",
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn insert_operation(
+        &self,
+        capability: &str,
+        actor_user_id: Option<&str>,
+        entity_type: &str,
+        entity_id: &str,
+        request_payload: &str,
+        result_payload: &str,
+        status: &str,
+    ) -> Result<(), RepositoryError> {
         sqlx::query(
             "INSERT INTO operation_records
                  (id, actor_user_id, capability, entity_type, entity_id,
                   request_payload, result_payload, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'SUCCESS', ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(new_id("OPR"))
         .bind(actor_user_id)
@@ -100,6 +146,7 @@ impl Repository {
         .bind(entity_id)
         .bind(request_payload)
         .bind(result_payload)
+        .bind(status)
         .bind(Utc::now())
         .execute(&self.pool)
         .await
