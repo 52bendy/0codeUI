@@ -26,8 +26,10 @@
 │   │   ├── ui/                 # UI 生成契约、场景注册、模板与单文件 HTML 渲染
 │   │   ├── middleware/         # 鉴权 / 限流 / 超时中间件
 │   │   ├── routes/             # 路由注册与端点
+│   │   ├── ui_template/        # 静态模板引擎与兜底渲染（M1）
 │   │   └── bin/intimeui-seed.rs # 种子数据一键加载 CLI
-│   └── tests/                  # 集成测试（api.rs / data_model.rs / ui_generate.rs）
+│   ├── templates/              # 单文件 HTML 模板（编译期内嵌）
+│   └── tests/                  # 集成测试（api.rs / data_model.rs / ui_generate.rs / template_engine.rs / ui_render_api.rs）
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
 ├── deploy/                     # 部署参考（systemd 单元）
 ├── Dockerfile
@@ -46,6 +48,7 @@
   - 数据底座：用户 / 商品 / 订单 / 订单项 / 操作记录五张表，版本化迁移 + 幂等种子数据；
   - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）；
   - UI 生成（M1 第一阶段）：`POST /api/v1/ui/generate`，场景注册表（首批 3 个模板场景）与单文件 HTML 渲染。
+  - 静态模板引擎：模板库 + Data Payload 填充（默认 HTML 转义）+ 内联交互绑定，`POST /api/v1/ui/render` 输出单文件 HTML，P95 远低于 200ms；同时作为动态生成管线的兜底通道。
 
 ### 快速开始（本地）
 
@@ -144,6 +147,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/generate \
 | GET | `/api/v1/orders/{order_id}/business-data` | 是 | 订单业务数据（PRD §5.1 `business_data` 同构） |
 | GET | `/api/v1/users/{user_id}/balance` | 是 | 用户余额（精确十进制金额） |
 | POST | `/api/v1/ui/generate` | 是 | UI 生成（场景注册 + 单文件 HTML，见下节） |
+| POST | `/api/v1/ui/render` | 是 | 静态模板渲染（单文件 HTML，兜底通道） |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 
@@ -220,6 +224,16 @@ cargo run -p intimeui-server --bin intimeui-seed -- --database-url sqlite://data
 
 场景注册表位于 `server/src/ui/scene.rs`，模板实现位于 `server/src/ui/template.rs`；
 新增场景需同步补充场景契约、模板与 `server/tests/ui_generate.rs` 契约测试。
+### 静态模板引擎与兜底渲染（M1 · REQ-202610-1172）
+
+- **模板库**：`server/templates/*.html` 编译期内嵌；首批 `ORDER_DETAIL_PAGE`（订单详情，兼容 PRD §5.1 `business_data`）。
+- **填充引擎**：`{{path}}` 插值、`{{#items}}` 迭代、`{{^items}}` 反向区块；所有插值默认 HTML 转义。
+- **内联交互**：模板内 `button.onclick` 直接 `fetch` 后端业务接口（如刷新订单状态），不嵌入任何凭据。
+- **接口**：`POST /api/v1/ui/render`，请求 `{scene_code, business_data, device_info?}`，返回 `{html, strategy, template_version, render_ms}`。
+- **兜底入口**：`TemplateEngine::render_fallback` 供动态生成管线（REQ-202610-1185）在超时 / 校验失败时调用。
+- **性能**：引擎级 P95 ≈ 0.4ms，HTTP 端到端 P95 ≈ 3.3ms（本机 debug 构建，方法见文档）。
+
+详见 [`docs/static-template-engine.md`](docs/static-template-engine.md)。
 
 ### 测试与检查
 

@@ -10,6 +10,7 @@ pub mod example;
 pub mod health;
 pub mod orders;
 pub mod ui;
+pub mod ui_render;
 
 use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post};
@@ -36,6 +37,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/users/{user_id}/balance", get(orders::user_balance))
         .route("/api/v1/ui/generate", post(ui::generate))
+        .route("/api/v1/ui/render", post(ui_render::render_ui))
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
     Router::new()

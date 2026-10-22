@@ -25,6 +25,7 @@ pub mod routes;
 pub mod state;
 pub mod telemetry;
 pub mod ui;
+pub mod ui_template;
 pub mod validation;
 
 use std::time::Duration;
