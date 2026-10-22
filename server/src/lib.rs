@@ -1,6 +1,7 @@
 //! InTimeUI 后端服务（M0 基础工程）。
 //!
 //! 模块划分：
+//! - [`capability`]：原子能力注册中心（声明式 Schema + 执行器 + 审计）；
 //! - [`config`]：环境变量配置与密钥注入；
 //! - [`db`]：SQLite 连接池、迁移与种子数据；
 //! - [`error`]：全局错误码规范与错误类型；
@@ -13,6 +14,7 @@
 //! - [`telemetry`]：结构化日志；
 //! - [`validation`]：请求参数校验提取器。
 
+pub mod capability;
 pub mod config;
 pub mod db;
 pub mod error;

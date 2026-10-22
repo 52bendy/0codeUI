@@ -2,9 +2,11 @@
 //!
 //! - 公开路由：`/`、`/healthz`、`/readyz`、`/api/v1/ping`；
 //! - 受保护路由（需鉴权）：`/api/v1/me`、`/api/v1/echo`、
-//!   `/api/v1/orders/{order_id}/business-data`、`/api/v1/users/{user_id}/balance`；
+//!   `/api/v1/orders/{order_id}/business-data`、`/api/v1/users/{user_id}/balance`、
+//!   `/api/v1/capabilities`、`/api/v1/capabilities/{name}/execute`；
 //! - 未匹配路径统一返回 404 响应结构。
 
+pub mod capabilities;
 pub mod example;
 pub mod health;
 pub mod orders;
@@ -33,6 +35,11 @@ pub fn router(state: AppState) -> Router {
             get(orders::order_business_data),
         )
         .route("/api/v1/users/{user_id}/balance", get(orders::user_balance))
+        .route("/api/v1/capabilities", get(capabilities::list))
+        .route(
+            "/api/v1/capabilities/{name}/execute",
+            post(capabilities::execute),
+        )
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
     Router::new()

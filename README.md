@@ -17,6 +17,7 @@
 │   │   ├── config.rs           # 环境变量配置（含密钥注入）
 │   │   ├── db/                 # SQLite 连接池、迁移执行、种子数据
 │   │   ├── models.rs           # 核心业务领域模型（Decimal 金额）
+│   │   ├── capability/         # 原子能力注册中心（声明式 Schema + 执行器）
 │   │   ├── repository/         # 数据访问层 + 原子能力（create_order 等）
 │   │   ├── error.rs            # 全局错误码规范 + AppError
 │   │   ├── response.rs         # 统一响应结构 {code, msg, data}
@@ -43,7 +44,8 @@
   - 结构化日志（dev pretty / prod json）与请求 ID 贯穿；
   - 健康检查：`/healthz`（存活）、`/readyz`（含数据库探测）；
   - 数据底座：用户 / 商品 / 订单 / 订单项 / 操作记录五张表，版本化迁移 + 幂等种子数据；
-  - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）。
+  - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）；
+  - 原子能力注册中心：声明式 Schema + 统一执行器 + 能力清单 API（详见 [`docs/capability-registry.md`](docs/capability-registry.md)）。
 
 ### 快速开始（本地）
 
@@ -125,6 +127,8 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | POST | `/api/v1/echo` | 是 | 参数校验示例（`message` 1~500 字；`priority` 1~9） |
 | GET | `/api/v1/orders/{order_id}/business-data` | 是 | 订单业务数据（PRD §5.1 `business_data` 同构） |
 | GET | `/api/v1/users/{user_id}/balance` | 是 | 用户余额（精确十进制金额） |
+| GET | `/api/v1/capabilities` | 是 | 原子能力清单（含 OpenAI function 定义） |
+| POST | `/api/v1/capabilities/{name}/execute` | 是 | 执行原子能力（参数校验 + 审计） |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 
