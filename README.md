@@ -27,7 +27,8 @@
 │   │   ├── telemetry_events.rs # 埋点事件模型与校验（REQ-202610-1174）
 │   │   ├── validation.rs       # 请求参数校验提取器
 │   │   ├── ui/                 # UI 生成契约、场景注册、模板与单文件 HTML 渲染
-│   │   ├── middleware/         # 鉴权 / 限流 / 超时 / 埋点配额 / 防重放接入点
+│   │   ├── middleware/         # 鉴权 / 限流 / 超时 / 埋点配额 / 防重放签名
+│   │   ├── replay/             # 防重放协议、签名器与校验服务（REQ-202610-1186）
 │   │   ├── routes/             # 路由注册与端点
 │   │   ├── ui_template/        # 静态模板引擎与兜底渲染（M1）
 │   │   └── bin/intimeui-seed.rs # 种子数据一键加载 CLI
@@ -51,6 +52,7 @@
   - 数据底座：用户 / 商品 / 订单 / 订单项 / 操作记录五张表，版本化迁移 + 幂等种子数据；
   - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）；
   - 埋点采集：单条 / 批量事件上报、字段校验、按用户防刷配额、用户维度明细与聚合查询（REQ-202610-1174）。
+  - API 防重放签名（M5）：动态令牌 + Nonce + 时间窗 + HMAC-SHA256 + SQLite 去重，覆盖 UI 生成 / 意图执行 / 埋点上报三条写接口（REQ-202610-1186，详见 [`docs/replay-protection.md`](docs/replay-protection.md)）。
   - 意图理解与 Tool Call Agent（M3）：自然语言 → JSON Schema 决策树 → 函数调用序列，支持上下文指代消歧、多意图排序、非法输出拦截与澄清追问（详见 [`docs/intent-tool-call-agent.md`](docs/intent-tool-call-agent.md)）。
   - UI 生成（M1 第一阶段）：`POST /api/v1/ui/generate`，场景注册表（首批 3 个模板场景）与单文件 HTML 渲染。
   - 静态模板引擎：模板库 + Data Payload 填充（默认 HTML 转义）+ 内联交互绑定，`POST /api/v1/ui/render` 输出单文件 HTML，P95 远低于 200ms；同时作为动态生成管线的兜底通道。
@@ -135,7 +137,11 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/generate \
 | `TELEMETRY_QUOTA_ENABLED` | `true` | 是否启用埋点防刷配额 |
 | `TELEMETRY_QUOTA_PER_MINUTE` | `600` | 每用户每分钟允许上报的事件条数（需 ≥ 单批上限） |
 | `TELEMETRY_MAX_BATCH_SIZE` | `100` | 单次上报最大事件条数（1~1000） |
-| `TELEMETRY_REPLAY_ENABLED` | `false` | 是否校验防重放头（完整签名由 REQ-202610-1186 实现） |
+| `REPLAY_PROTECTION_ENABLED` | `false` | 是否启用 API 防重放签名（三条写接口） |
+| `REPLAY_SIGNING_SECRET` | 无 | 防重放共享密钥，启用时必填且 ≥32 字节（仅环境变量 / Secrets） |
+| `REPLAY_CLOCK_SKEW_SECS` | `300` | 允许时钟偏移（秒，30–900） |
+| `REPLAY_NONCE_TTL_SECS` | `600` | Nonce 去重记录保留秒数（≥2×时钟偏移） |
+| `REPLAY_MAX_BODY_BYTES` | `2097152` | 防重放中间件缓冲请求体上限（2 MiB） |
 | `INTENT_AGENT_MAX_ATTEMPTS` | `2` | 意图 Agent 模型输出最大尝试次数（1~3） |
 | `INTENT_SESSION_TTL_SECS` | `1800` | 意图会话上下文 TTL（秒，最小 1） |
 | `DATABASE_URL` | `sqlite://data/intimeui.db` | SQLite 连接串（文件自动创建；测试可用 `sqlite::memory:`） |
@@ -171,13 +177,13 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/generate \
 | POST | `/api/v1/echo` | 是 | 参数校验示例（`message` 1~500 字；`priority` 1~9） |
 | GET | `/api/v1/orders/{order_id}/business-data` | 是 | 订单业务数据（PRD §5.1 `business_data` 同构） |
 | GET | `/api/v1/users/{user_id}/balance` | 是 | 用户余额（精确十进制金额） |
-| POST | `/api/v1/telemetry/event` | 是 | 埋点事件上报（单条或 `{events:[...]}` 批量） |
+| POST | `/api/v1/telemetry/event` | 是 | 埋点事件上报（单条或 `{events:[...]}` 批量；可要求防重放签名） |
 | GET | `/api/v1/telemetry/events` | 是 | 埋点明细（按用户 / 页面 / 时间过滤，分页） |
 | GET | `/api/v1/telemetry/aggregate` | 是 | 埋点聚合（总体均值 + 分页面均值） |
-| POST | `/api/v1/intent/execute` | 是 | 意图执行（PRD §5.2；读类直接执行，写 / 删类返回确认卡片） |
+| POST | `/api/v1/intent/execute` | 是 | 意图执行（PRD §5.2；读类直接执行，写 / 删类返回确认卡片；可要求防重放签名） |
 | POST | `/api/v1/intent/understand` | 是 | 自然语言 → 结构化决策树 / 澄清追问 |
 | GET | `/api/v1/intent/tools` | 是 | 意图 Agent 可用能力清单（OpenAI function 定义） |
-| POST | `/api/v1/ui/generate` | 是 | UI 生成（场景注册 + 单文件 HTML，见下节） |
+| POST | `/api/v1/ui/generate` | 是 | UI 生成（场景注册 + 单文件 HTML，见下节；可要求防重放签名） |
 | POST | `/api/v1/ui/render` | 是 | 静态模板渲染（单文件 HTML，兜底通道） |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
@@ -269,9 +275,10 @@ curl -s 'http://127.0.0.1:8080/api/v1/telemetry/aggregate?user_id=u100' \
 
 用户只能读写自己的埋点数据：`user_id` 与鉴权用户不一致返回 `403`。
 
-**防重放接入点**：上报入口统一经过 `middleware::replay::ReplayGuard`；
-`TELEMETRY_REPLAY_ENABLED=true` 时先校验 `x-timestamp` / `x-nonce` / `x-signature`
-三个头与 ±300s 时间窗，完整 HMAC 签名与 nonce 去重由 REQ-202610-1186 接入。
+**防重放签名**：埋点上报与 UI 生成、意图执行共用一套签名中间件；开启
+`REPLAY_PROTECTION_ENABLED=true` 后，请求必须携带 `x-timestamp` / `x-nonce` /
+`x-dynamic-token` / `x-signature`。完整协议、客户端生成方式与失败处理见
+[`docs/replay-protection.md`](docs/replay-protection.md)。
 
 ### UI 生成接口（M1 第一阶段）
 
@@ -377,4 +384,6 @@ docker exec intimeui-server intimeui-seed
 - **M1 模板兜底链路**：REQ-202610-1171 UI 生成接口与场景注册（已交付）、REQ-202610-1172 静态模板引擎（已交付）、REQ-202610-1173 单文件 HTML 校验器
 - **M2 埋点画像**：REQ-202610-1174 埋点事件采集（已交付）；REQ-202610-1175 / 1176 待排期
 - **M3 意图引擎**：REQ-202610-1180 意图理解与 Tool Call Agent（已交付）
-- M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收
+- **M4 动态生成**：待排期
+- **M5 安全**：REQ-202610-1186 API 防重放签名（已交付）
+- **M6 训练线 / M7 客户端与验收**：待排期

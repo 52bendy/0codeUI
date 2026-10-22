@@ -1,153 +1,68 @@
-//! 防重放签名接入点（为 REQ-202610-1186 预留）。
+//! API 防重放签名中间件（REQ-202610-1186）。
 //!
-//! REQ-202610-1186 将实现完整的 `HMAC-SHA256 + Nonce + ±300s 时间窗 + 服务端去重表`。
-//! 本模块先把调用链打通：所有埋点上报在进入 handler 前都会经过 [`ReplayGuard`]，
-//! 后续只需替换 [`crate::state::AppState`] 中的实现即可，无需改动业务代码。
+//! 仅挂在需要签名的三条写接口上（UI 生成 / 意图执行 / 埋点上报）。
+//! 鉴权中间件必须先执行，以便把 [`AuthUser`] 注入扩展后由本中间件绑定 `user_id`。
 //!
-//! 默认关闭（`TELEMETRY_REPLAY_ENABLED=false`），避免影响联调；
-//! 打开后先校验三个签名头是否存在、时间戳是否在 ±300s 窗口内，
-//! 签名本身的校验留给 REQ-202610-1186。
+//! 处理流程：
+//! 1. 开关关闭时直接放行（零开销，不缓冲请求体）；
+//! 2. 读取并缓存请求体（上限 [`crate::replay::ReplayService::max_body_bytes`]）；
+//! 3. 校验时间窗、动态令牌、HMAC 签名；
+//! 4. 消费 Nonce（SQLite 去重），重放返回 409；
+//! 5. 用缓存的字节重建请求体，交给下游 handler。
 
-use axum::http::HeaderMap;
-use chrono::Utc;
+use axum::body::{to_bytes, Body};
+use axum::extract::{Request, State};
+use axum::middleware::Next;
+use axum::response::Response;
 
 use crate::error::AppError;
+use crate::middleware::auth::AuthUser;
+use crate::replay::ReplayRequest;
 use crate::state::AppState;
 
-/// 时间戳请求头（Unix 秒）。
-pub const TIMESTAMP_HEADER: &str = "x-timestamp";
-/// 随机数请求头。
-pub const NONCE_HEADER: &str = "x-nonce";
-/// 签名请求头。
-pub const SIGNATURE_HEADER: &str = "x-signature";
-/// 允许的时钟偏移（秒）。
-pub const MAX_CLOCK_SKEW_SECS: i64 = 300;
-
-/// 防重放校验上下文。
-#[derive(Debug)]
-pub struct ReplayContext<'a> {
-    /// 当前鉴权用户。
-    pub user_id: &'a str,
-    /// HTTP 方法。
-    pub method: &'a str,
-    /// 请求路径。
-    pub path: &'a str,
-    /// 请求头。
-    pub headers: &'a HeaderMap,
-}
-
-/// 防重放校验器接口。
-pub trait ReplayGuard: Send + Sync {
-    /// 校验请求；失败返回统一错误。
-    fn verify(&self, context: &ReplayContext<'_>) -> Result<(), AppError>;
-}
-
-/// 当前默认实现：开关关闭时直接放行；开启时校验签名头与时间窗。
-#[derive(Debug, Default)]
-pub struct PendingReplayGuard {
-    enabled: bool,
-}
-
-impl PendingReplayGuard {
-    /// 按配置构造。
-    pub const fn new(enabled: bool) -> Self {
-        Self { enabled }
+/// 防重放签名校验中间件。
+pub async fn require_signature(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    if !state.replay.enabled() {
+        return Ok(next.run(request).await);
     }
-}
 
-impl ReplayGuard for PendingReplayGuard {
-    fn verify(&self, context: &ReplayContext<'_>) -> Result<(), AppError> {
-        if !self.enabled {
-            return Ok(());
-        }
+    let user_id = request
+        .extensions()
+        .get::<AuthUser>()
+        .map(|user| user.user_id.clone())
+        .ok_or_else(AppError::unauthorized)?;
 
-        let timestamp = header_value(context.headers, TIMESTAMP_HEADER)?;
-        let _nonce = header_value(context.headers, NONCE_HEADER)?;
-        let _signature = header_value(context.headers, SIGNATURE_HEADER)?;
+    let (parts, body) = request.into_parts();
+    let method = parts.method.as_str().to_string();
+    let path_and_query = parts
+        .uri
+        .path_and_query()
+        .map(|value| value.as_str().to_string())
+        .unwrap_or_else(|| parts.uri.path().to_string());
 
-        let timestamp: i64 = timestamp.parse().map_err(|_| {
-            AppError::invalid_param("x-timestamp must be a Unix timestamp in seconds")
+    let bytes = to_bytes(body, state.replay.max_body_bytes())
+        .await
+        .map_err(|error| {
+            AppError::invalid_param(format!(
+                "request body could not be read for signature verification: {error}"
+            ))
         })?;
-        let now = Utc::now().timestamp();
-        if now.abs_diff(timestamp) > MAX_CLOCK_SKEW_SECS as u64 {
-            return Err(AppError::invalid_param(
-                "x-timestamp is outside the allowed ±300s window",
-            ));
-        }
 
-        // TODO(REQ-202610-1186): 校验 HMAC-SHA256 签名，并做 nonce 服务端去重。
-        Ok(())
-    }
-}
+    state
+        .replay
+        .verify(&ReplayRequest {
+            user_id: &user_id,
+            method: &method,
+            path_and_query: &path_and_query,
+            headers: &parts.headers,
+            body: &bytes,
+        })
+        .await?;
 
-fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str, AppError> {
-    headers
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| AppError::invalid_param(format!("missing replay protection header: {name}")))
-}
-
-/// 埋点上报入口的便捷校验函数。
-pub fn verify_telemetry_request(
-    state: &AppState,
-    headers: &HeaderMap,
-    user_id: &str,
-) -> Result<(), AppError> {
-    state.replay_guard.verify(&ReplayContext {
-        user_id,
-        method: "POST",
-        path: "/api/v1/telemetry/event",
-        headers,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn context<'a>(headers: &'a HeaderMap) -> ReplayContext<'a> {
-        ReplayContext {
-            user_id: "u1",
-            method: "POST",
-            path: "/api/v1/telemetry/event",
-            headers,
-        }
-    }
-
-    #[test]
-    fn disabled_guard_allows_request_without_headers() {
-        let guard = PendingReplayGuard::new(false);
-        assert!(guard.verify(&context(&HeaderMap::new())).is_ok());
-    }
-
-    #[test]
-    fn enabled_guard_requires_signature_headers() {
-        let guard = PendingReplayGuard::new(true);
-        assert!(guard.verify(&context(&HeaderMap::new())).is_err());
-    }
-
-    #[test]
-    fn enabled_guard_accepts_current_timestamp() {
-        let guard = PendingReplayGuard::new(true);
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            TIMESTAMP_HEADER,
-            Utc::now().timestamp().to_string().parse().unwrap(),
-        );
-        headers.insert(NONCE_HEADER, "nonce-1".parse().unwrap());
-        headers.insert(SIGNATURE_HEADER, "sig".parse().unwrap());
-        assert!(guard.verify(&context(&headers)).is_ok());
-    }
-
-    #[test]
-    fn enabled_guard_rejects_stale_timestamp() {
-        let guard = PendingReplayGuard::new(true);
-        let mut headers = HeaderMap::new();
-        let stale = Utc::now().timestamp() - MAX_CLOCK_SKEW_SECS - 1;
-        headers.insert(TIMESTAMP_HEADER, stale.to_string().parse().unwrap());
-        headers.insert(NONCE_HEADER, "nonce-1".parse().unwrap());
-        headers.insert(SIGNATURE_HEADER, "sig".parse().unwrap());
-        assert!(guard.verify(&context(&headers)).is_err());
-    }
+    let request = Request::from_parts(parts, Body::from(bytes));
+    Ok(next.run(request).await)
 }

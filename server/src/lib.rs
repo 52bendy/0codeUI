@@ -8,8 +8,9 @@
 //! - [`error`]：全局错误码规范与错误类型；
 //! - [`models`]：核心业务领域模型；
 //! - [`repository`]：数据访问层与原子能力实现；
+//! - [`replay`]：API 防重放签名协议与校验服务（REQ-202610-1186）；
 //! - [`response`]：统一响应结构 `{code, msg, data}`；
-//! - [`middleware`]：鉴权 / 限流 / 超时中间件；
+//! - [`middleware`]：鉴权 / 限流 / 超时 / 防重放中间件；
 //! - [`routes`]：路由注册与端点实现；
 //! - [`state`]：应用共享状态；
 //! - [`telemetry`]：结构化日志；
@@ -24,6 +25,7 @@ pub mod intent;
 pub mod intent_agent;
 pub mod middleware;
 pub mod models;
+pub mod replay;
 pub mod repository;
 pub mod response;
 pub mod routes;

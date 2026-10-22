@@ -9,13 +9,11 @@
 use std::collections::HashMap;
 
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
 use axum::Json;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::error::AppError;
 use crate::middleware::auth::AuthUser;
-use crate::middleware::replay;
 use crate::repository::Repository;
 use crate::response::ApiResponse;
 use crate::state::AppState;
@@ -46,12 +44,8 @@ const MAX_LIMIT: i64 = 200;
 pub async fn ingest_event(
     State(state): State<AppState>,
     user: AuthUser,
-    headers: HeaderMap,
     ValidatedJson(payload): ValidatedJson<TelemetryIngestPayload>,
 ) -> Result<Json<ApiResponse<TelemetryIngestResult>>, AppError> {
-    // 防重放签名接入点（REQ-202610-1186 将在此实现完整校验）。
-    replay::verify_telemetry_request(&state, &headers, &user.user_id)?;
-
     let inputs = match payload {
         TelemetryIngestPayload::Single(event) => vec![event],
         TelemetryIngestPayload::Batch(batch) => batch.events,

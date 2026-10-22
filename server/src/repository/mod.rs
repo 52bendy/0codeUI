@@ -7,6 +7,7 @@ mod capabilities;
 mod intent_sessions;
 mod orders;
 mod products;
+mod replay;
 mod telemetry;
 mod users;
 

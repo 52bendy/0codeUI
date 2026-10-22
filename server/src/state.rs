@@ -9,8 +9,8 @@ use crate::intent::planner::{IntentPlanner, RuleBasedIntentPlanner};
 use crate::intent::service::IntentService;
 use crate::intent_agent::ToolCallAgent;
 use crate::middleware::rate_limit::RateLimiter;
-use crate::middleware::replay::{PendingReplayGuard, ReplayGuard};
 use crate::middleware::telemetry_quota::TelemetryQuota;
+use crate::replay::ReplayService;
 use crate::repository::Repository;
 
 /// 全局共享状态。
@@ -22,8 +22,8 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     /// 埋点上报防刷配额（按用户维度）。
     pub telemetry_quota: Arc<TelemetryQuota>,
-    /// 防重放校验器（REQ-202610-1186 接入点，当前为预留实现）。
-    pub replay_guard: Arc<dyn ReplayGuard>,
+    /// API 防重放签名校验服务（REQ-202610-1186）。
+    pub replay: Arc<ReplayService>,
     /// 数据库句柄。
     pub db: Arc<Db>,
     /// 意图理解与 Tool Call Agent。
@@ -47,8 +47,7 @@ impl AppState {
             config.telemetry_max_batch_size,
             config.telemetry_quota_enabled,
         );
-        let replay_guard: Arc<dyn ReplayGuard> =
-            Arc::new(PendingReplayGuard::new(config.telemetry_replay_enabled));
+        let replay = Arc::new(ReplayService::new(&config, db.pool().clone()));
         let intent_agent = Arc::new(ToolCallAgent::rule_based(config.intent_agent_max_attempts));
         let intent_service = IntentService::new(
             Repository::from_db(&db),
@@ -59,7 +58,7 @@ impl AppState {
             config: Arc::new(config),
             rate_limiter: Arc::new(rate_limiter),
             telemetry_quota: Arc::new(telemetry_quota),
-            replay_guard,
+            replay,
             db: Arc::new(db),
             intent_agent,
             intent_service: Arc::new(intent_service),

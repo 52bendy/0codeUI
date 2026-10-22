@@ -402,44 +402,6 @@ async fn time_filters_and_pagination_work() {
 }
 
 #[tokio::test]
-async fn replay_guard_can_be_enabled() {
-    let config = AppConfig {
-        rate_limit_enabled: false,
-        telemetry_quota_enabled: false,
-        telemetry_replay_enabled: true,
-        ..AppConfig::default()
-    };
-    let (app, _) = app_with(config).await;
-    let payload = event("u1000", "page_home", 1000, 1);
-
-    let (status, body) = send(
-        &app,
-        with_bearer(
-            post_json("/api/v1/telemetry/event", payload.clone()),
-            "dev:u1000",
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["code"], 40000);
-
-    let mut request = with_bearer(post_json("/api/v1/telemetry/event", payload), "dev:u1000");
-    request.headers_mut().insert(
-        "x-timestamp",
-        Utc::now().timestamp().to_string().parse().unwrap(),
-    );
-    request
-        .headers_mut()
-        .insert("x-nonce", "nonce-1000".parse().unwrap());
-    request
-        .headers_mut()
-        .insert("x-signature", "pending-signature".parse().unwrap());
-    let (status, body) = send(&app, request).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["data"]["accepted"], 1);
-}
-
-#[tokio::test]
 async fn schema_stores_only_interaction_metrics() {
     let (_, db) = app_with(test_config()).await;
     use sqlx::Row;
