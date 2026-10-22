@@ -17,6 +17,8 @@
 │   │   ├── config.rs           # 环境变量配置（含密钥注入）
 │   │   ├── db/                 # SQLite 连接池、迁移执行、种子数据
 │   │   ├── models.rs           # 核心业务领域模型（Decimal 金额）
+│   │   ├── intent/             # 意图执行编排、会话上下文与规则规划器（M3 / #09）
+│   │   ├── intent_agent/       # 意图理解与 Tool Call Agent（M3 / #1180）
 │   │   ├── repository/         # 数据访问层 + 原子能力（create_order 等）
 │   │   ├── error.rs            # 全局错误码规范 + AppError
 │   │   ├── response.rs         # 统一响应结构 {code, msg, data}
@@ -27,7 +29,7 @@
 │   │   ├── middleware/         # 鉴权 / 限流 / 超时 / 埋点配额 / 防重放接入点
 │   │   ├── routes/             # 路由注册与端点
 │   │   └── bin/intimeui-seed.rs # 种子数据一键加载 CLI
-│   └── tests/                  # 集成测试（api.rs / data_model.rs）
+│   └── tests/                  # 集成测试（api / data_model / intent_execute / intent_agent / 联调）
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
 ├── deploy/                     # 部署参考（systemd 单元）
 ├── Dockerfile
@@ -46,6 +48,7 @@
   - 数据底座：用户 / 商品 / 订单 / 订单项 / 操作记录五张表，版本化迁移 + 幂等种子数据；
   - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）；
   - 埋点采集：单条 / 批量事件上报、字段校验、按用户防刷配额、用户维度明细与聚合查询（REQ-202610-1174）。
+  - 意图理解与 Tool Call Agent（M3）：自然语言 → JSON Schema 决策树 → 函数调用序列，支持上下文指代消歧、多意图排序、非法输出拦截与澄清追问（详见 [`docs/intent-tool-call-agent.md`](docs/intent-tool-call-agent.md)）。
 
 ### 快速开始（本地）
 
@@ -78,6 +81,20 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
   -H 'Authorization: Bearer dev:1001' \
   -H 'Content-Type: application/json' \
   -d '{"message":"hello","priority":5}'
+
+# 8. 意图执行（PRD §5.2；写操作返回确认卡片，不直接执行）
+curl -s -X POST http://127.0.0.1:8080/api/v1/intent/execute \
+  -H 'Authorization: Bearer dev:usr_9527' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "user_id": "usr_9527",
+    "input_type": "NATURAL_LANGUAGE",
+    "raw_input": "把这个订单的收货地址修改为北京市海淀区中关村南大街1号",
+    "current_context": {
+      "active_page": "ORDER_DETAIL_PAGE",
+      "entity_id": "ORD_20261014_001"
+    }
+  }'
 ```
 
 ### 环境变量
@@ -99,6 +116,8 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | `TELEMETRY_QUOTA_PER_MINUTE` | `600` | 每用户每分钟允许上报的事件条数（需 ≥ 单批上限） |
 | `TELEMETRY_MAX_BATCH_SIZE` | `100` | 单次上报最大事件条数（1~1000） |
 | `TELEMETRY_REPLAY_ENABLED` | `false` | 是否校验防重放头（完整签名由 REQ-202610-1186 实现） |
+| `INTENT_AGENT_MAX_ATTEMPTS` | `2` | 意图 Agent 模型输出最大尝试次数（1~3） |
+| `INTENT_SESSION_TTL_SECS` | `1800` | 意图会话上下文 TTL（秒，最小 1） |
 | `DATABASE_URL` | `sqlite://data/intimeui.db` | SQLite 连接串（文件自动创建；测试可用 `sqlite::memory:`） |
 
 > **密钥管理**：仅通过环境变量 / Secrets 注入，严禁写入仓库或数据库。生产环境请用部署平台（systemd `EnvironmentFile`、Docker secrets、K8s Secret 等）下发。
@@ -120,7 +139,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | `50300` | 503 | 服务暂不可用 |
 | `50400` | 504 | 请求处理超时 |
 
-### 接口一览（M0 示例）
+### 接口一览
 
 | 方法 | 路径 | 鉴权 | 说明 |
 | --- | --- | --- | --- |
@@ -134,8 +153,12 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | POST | `/api/v1/telemetry/event` | 是 | 埋点事件上报（单条或 `{events:[...]}` 批量） |
 | GET | `/api/v1/telemetry/events` | 是 | 埋点明细（按用户 / 页面 / 时间过滤，分页） |
 | GET | `/api/v1/telemetry/aggregate` | 是 | 埋点聚合（总体均值 + 分页面均值） |
+| POST | `/api/v1/intent/execute` | 是 | 意图执行（PRD §5.2；读类直接执行，写 / 删类返回确认卡片） |
+| POST | `/api/v1/intent/understand` | 是 | 自然语言 → 结构化决策树 / 澄清追问 |
+| GET | `/api/v1/intent/tools` | 是 | 意图 Agent 可用能力清单（OpenAI function 定义） |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
+意图执行契约详见 [`docs/intent-execute-contract.md`](docs/intent-execute-contract.md)。
 
 ### 数据模型与种子数据（M0）
 
@@ -148,6 +171,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | `orders` | 订单（`ORD_20261014_001`，状态 `PAID`，合计 299.00） |
 | `order_items` | 订单项（商品名称/单价为下单时快照） |
 | `operation_records` | 原子能力操作审计（create_order / query_user_balance / update_item_status / delete_record） |
+| `intent_sessions` | 意图会话状态（上下文、最近意图、最近动作；按 `session_id` 唯一、按用户隔离） |
 
 **金额精度**：SQLite 没有原生 `DECIMAL`，`NUMERIC` 亲和性会退化为 IEEE-754 浮点。
 因此数据库以「分」为单位的整数（`*_cents`）精确存储，Rust 领域层统一使用
@@ -274,5 +298,6 @@ docker exec intimeui-server intimeui-seed
 ## 路线图（对应 REQ-202610-1168 拆解）
 
 - **M0 基础工程**：REQ-202610-1169 服务基座（已交付）、REQ-202610-1170 数据模型与种子数据（已交付）
-- **M2 埋点画像**：REQ-202610-1174 埋点事件采集（本批交付）；REQ-202610-1175 / 1176 待排期
-- M1 模板兜底链路 / M3 意图引擎 / M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收
+- **M2 埋点画像**：REQ-202610-1174 埋点事件采集（已交付）；REQ-202610-1175 / 1176 待排期
+- **M3 意图引擎**：REQ-202610-1180 意图理解与 Tool Call Agent（已交付）
+- M1 模板兜底链路 / M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收

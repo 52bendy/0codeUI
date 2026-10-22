@@ -8,6 +8,8 @@
 
 pub mod example;
 pub mod health;
+pub mod intent;
+pub mod intent_agent;
 pub mod orders;
 pub mod telemetry;
 
@@ -41,6 +43,9 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/telemetry/aggregate",
             get(telemetry::aggregate_events),
         )
+        .route("/api/v1/intent/execute", post(intent::execute))
+        .route("/api/v1/intent/understand", post(intent_agent::understand))
+        .route("/api/v1/intent/tools", get(intent_agent::tools))
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
     Router::new()
