@@ -6,6 +6,7 @@
 mod capabilities;
 mod orders;
 mod products;
+mod profiles;
 mod users;
 
 use chrono::{DateTime, Utc};

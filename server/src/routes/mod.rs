@@ -10,6 +10,7 @@ pub mod example;
 pub mod health;
 pub mod model;
 pub mod orders;
+pub mod profiles;
 pub mod ui;
 pub mod ui_render;
 
@@ -43,6 +44,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/ui/model/stream", post(model::stream))
         .route("/api/v1/ui/model/info", get(model::info))
         .route("/api/v1/ui/model/metrics", get(model::metrics))
+        .route(
+            "/api/v1/users/{user_id}/profile",
+            get(profiles::get_profile).put(profiles::put_profile),
+        )
+        .route(
+            "/api/v1/users/{user_id}/profile/refresh",
+            post(profiles::refresh_profile),
+        )
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
     Router::new()

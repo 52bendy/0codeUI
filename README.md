@@ -17,6 +17,8 @@
 │   │   ├── config.rs           # 环境变量配置（含密钥注入）
 │   │   ├── db/                 # SQLite 连接池、迁移执行、种子数据
 │   │   ├── models.rs           # 核心业务领域模型（Decimal 金额）
+│   │   ├── profile/            # 用户画像引擎（EWMA / 防抖动 / Prompt 注入）
+│   │   ├── prompt/             # 动态 System Prompt 拼装器（版本化 / 脱敏 / 注入防护）
 │   │   ├── repository/         # 数据访问层 + 原子能力（create_order 等）
 │   │   ├── error.rs            # 全局错误码规范 + AppError
 │   │   ├── response.rs         # 统一响应结构 {code, msg, data}
@@ -34,7 +36,7 @@
 │   │       ├── intimeui-validate.rs # 单文件 HTML 校验 CLI
 │   │       └── intimeui-model-bench.rs # 模型延迟 / 成本基线 CLI
 │   ├── templates/              # 单文件 HTML 模板（编译期内嵌）
-│   └── tests/                  # 集成测试（api.rs / data_model.rs / ui_generate.rs / template_engine.rs / ui_render_api.rs / model_api.rs / html_validator.rs / validate_cli.rs）
+│   └── tests/                  # 集成测试（api / data_model / ui_generate / template_engine / ui_render_api / model_api / html_validator / validate_cli / profile_engine / user_profile / prompt_assembler）
 ├── docs/                       # 技术方案、模型推理部署与延迟基线文档
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
 ├── deploy/                     # 部署参考（systemd 单元 / 模型推理 compose）
@@ -58,6 +60,8 @@
   - **UI 生成模型接入（REQ-202610-1181）**：OpenAI 兼容 provider（vLLM / Ollama / DeepSeek）、
     并发信号量 + 有界排队、超时 / 重试 / 备用模型、多模型灰度、SSE 流式输出、
     单文件 HTML 安全校验、延迟分位与 token / 成本指标。
+  - 用户画像引擎：EWMA 偏好计算、单步限幅 / 死区 / 更新频率控制、冷启动置信度、Prompt 可注入 JSON（REQ-202610-1176）；
+  - 动态 System Prompt 拼装器：画像 + 业务数据 + 场景约束 + Few-Shot 的版本化拼装，稳定可复现、敏感字段脱敏、指令注入防护（REQ-202610-1182）。
 
 ### 快速开始（本地）
 
@@ -144,6 +148,10 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/model/generate \
 | `MODEL_MAX_RETRIES` | `1` | 可重试错误的重试次数 |
 | `MODEL_MAX_TOKENS` / `MODEL_TEMPERATURE` | `2048` / `0.2` | 默认生成参数 |
 | `MODEL_PRICE_INPUT_PER_1K` / `MODEL_PRICE_OUTPUT_PER_1K` | `0` / `0` | 成本估算单价（美元 / 千 token；自托管填 0） |
+| `PROFILE_EWMA_ALPHA` | `0.15` | 画像 EWMA 基础平滑系数，`(0, 1]` |
+| `PROFILE_MAX_ALPHA` | `0.6` | 画像 EWMA 平滑系数上限，`[base, 1]` |
+| `PROFILE_MIN_UPDATE_INTERVAL_SECS` | `60` | 画像自动更新最小间隔（秒） |
+| `PROFILE_MAX_OBSERVATIONS` | `1000` | 单次画像刷新最多处理样本数 |
 
 > **密钥管理**：仅通过环境变量 / Secrets 注入，严禁写入仓库或数据库。生产环境请用部署平台（systemd `EnvironmentFile`、Docker secrets、K8s Secret 等）下发。
 
@@ -183,6 +191,9 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/model/generate \
 | POST | `/api/v1/ui/model/stream` | 是 | UI 生成（SSE：`meta` → `delta` → `done`） |
 | GET | `/api/v1/ui/model/info` | 是 | 模型提供者、模型列表与并发 / 超时配置 |
 | GET | `/api/v1/ui/model/metrics` | 是 | 请求量、P50/P95/P99、token 与成本快照 |
+| GET | `/api/v1/users/{user_id}/profile` | 是 | 读取用户画像（冷启动返回默认值） |
+| PUT | `/api/v1/users/{user_id}/profile` | 是 | 主动设置偏好（font_scale / density / theme / radius / spacing） |
+| POST | `/api/v1/users/{user_id}/profile/refresh` | 是 | 按埋点 / 调研样本重算画像（EWMA） |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 
@@ -197,6 +208,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/model/generate \
 | `orders` | 订单（`ORD_20261014_001`，状态 `PAID`，合计 299.00） |
 | `order_items` | 订单项（商品名称/单价为下单时快照） |
 | `operation_records` | 原子能力操作审计（create_order / query_user_balance / update_item_status / delete_record） |
+| `user_profiles` | 用户画像（偏好向量 / 置信度 / 样本数 / 版本 / 冷启动标记） |
 
 **金额精度**：SQLite 没有原生 `DECIMAL`，`NUMERIC` 亲和性会退化为 IEEE-754 浮点。
 因此数据库以「分」为单位的整数（`*_cents`）精确存储，Rust 领域层统一使用
@@ -205,6 +217,36 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/model/generate \
 
 **迁移**：`server/migrations/*.sql` 由 sqlx 版本化管理（`_sqlx_migrations`），
 服务启动时自动执行；重复执行幂等。新增表结构请追加迁移文件，不要修改已发布迁移。
+
+### 用户画像引擎（REQ-202610-1176）
+
+画像引擎把 REQ-202610-1174 的埋点事件与 REQ-202610-1175 的偏好调研统一为
+`{font_scale, density, theme, radius, spacing}` 偏好向量，并通过 EWMA 平滑收敛。
+防抖动三层：单步限幅（异常停留 / 误触最多移动固定步长）、冷启动死区、更新频率控制。
+`GET /api/v1/users/{user_id}/profile` 返回的 `prompt_profile` 是可直接注入 Prompt 的扁平 JSON。
+
+完整算法、API 契约与调参说明见 [`docs/user-profile-engine.md`](docs/user-profile-engine.md)。
+
+### 动态 System Prompt 拼装器（REQ-202610-1182）
+
+`PromptAssembler` 把用户画像、`business_data`、场景约束与 Few-Shot 片段拼装为
+版本化、稳定可复现的 System Prompt。核心保证：
+
+- **稳定**：规范化 JSON（递归排序对象键）+ 固定分段顺序 + FNV-1a 指纹，同一输入字节级一致；
+- **安全**：业务数据递归脱敏（密码 / token / 邮箱 / 手机号等），数据区块标签转义，
+  指令与数据严格分离，注入式文本只产生告警、不改变指令；
+- **可测**：纯函数、无时间 / 随机依赖，模板版本 `intimeui.system_prompt@v1`。
+
+```rust
+use intimeui_server::prompt::{builtin_scene_constraints, PromptAssembler};
+
+let scene = builtin_scene_constraints("ORDER_DETAIL_PAGE").expect("scene");
+let assembled = PromptAssembler::assemble(&scene, &profile, &business_data, &few_shots)?;
+// assembled.system_prompt 可直接作为 ChatMessage::system 交给模型网关（REQ-202610-1181）
+```
+
+完整输入输出契约、脱敏字段清单与注入防护说明见
+[`docs/system-prompt-assembler.md`](docs/system-prompt-assembler.md)。
 
 **种子数据一键加载**：
 
@@ -331,6 +373,7 @@ cat page.html | cargo run -p intimeui-server --bin intimeui-validate -- -
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+cargo test -p intimeui-server --test prompt_assembler   # Prompt 拼装器专项
 cargo build --release
 
 # 模型延迟 / 成本基线（mock 无需 GPU；真实模型先按部署文档启动 vLLM）
