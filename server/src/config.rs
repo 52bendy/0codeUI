@@ -112,6 +112,20 @@ pub struct AppConfig {
     pub profile_min_update_interval_secs: u64,
     /// 单次画像刷新最多处理的样本数：`PROFILE_MAX_OBSERVATIONS`（默认 1000）。
     pub profile_max_observations: usize,
+    /// Few-Shot 检索总开关：`FEW_SHOT_ENABLED`（默认 true）。
+    pub few_shot_enabled: bool,
+    /// Few-Shot 返回片段数上限：`FEW_SHOT_TOP_K`（默认 3）。
+    pub few_shot_top_k: usize,
+    /// Few-Shot Prompt 片段 token 预算：`FEW_SHOT_TOKEN_BUDGET`（默认 1200）。
+    pub few_shot_token_budget: usize,
+    /// Few-Shot 最低相关性阈值：`FEW_SHOT_MIN_SCORE`（默认 0.15）。
+    pub few_shot_min_score: f64,
+    /// Few-Shot 单片段最大字符数：`FEW_SHOT_MAX_SNIPPET_CHARS`（默认 4000）。
+    pub few_shot_max_snippet_chars: usize,
+    /// Few-Shot 单场景候选集上限：`FEW_SHOT_CANDIDATE_LIMIT`（默认 200）。
+    pub few_shot_candidate_limit: usize,
+    /// Few-Shot 写接口管理令牌：`FEW_SHOT_ADMIN_TOKEN`（缺省不校验）。
+    pub few_shot_admin_token: Option<String>,
 }
 
 impl AppConfig {
@@ -218,6 +232,47 @@ impl AppConfig {
             });
         }
 
+        let few_shot_enabled = match optional_env("FEW_SHOT_ENABLED") {
+            Some(value) => parse_bool("FEW_SHOT_ENABLED", &value)?,
+            None => true,
+        };
+        let few_shot_top_k = env_parse("FEW_SHOT_TOP_K", 3usize)?;
+        if !(1..=10).contains(&few_shot_top_k) {
+            return Err(ConfigError {
+                key: "FEW_SHOT_TOP_K",
+                message: "must be in 1..=10".to_string(),
+            });
+        }
+        let few_shot_token_budget = env_parse("FEW_SHOT_TOKEN_BUDGET", 1_200usize)?;
+        if !(64..=8_000).contains(&few_shot_token_budget) {
+            return Err(ConfigError {
+                key: "FEW_SHOT_TOKEN_BUDGET",
+                message: "must be in 64..=8000".to_string(),
+            });
+        }
+        let few_shot_min_score = env_parse("FEW_SHOT_MIN_SCORE", 0.15f64)?;
+        if !(few_shot_min_score.is_finite() && (0.0..=1.0).contains(&few_shot_min_score)) {
+            return Err(ConfigError {
+                key: "FEW_SHOT_MIN_SCORE",
+                message: "must be in [0, 1]".to_string(),
+            });
+        }
+        let few_shot_max_snippet_chars = env_parse("FEW_SHOT_MAX_SNIPPET_CHARS", 4_000usize)?;
+        if !(200..=20_000).contains(&few_shot_max_snippet_chars) {
+            return Err(ConfigError {
+                key: "FEW_SHOT_MAX_SNIPPET_CHARS",
+                message: "must be in 200..=20000".to_string(),
+            });
+        }
+        let few_shot_candidate_limit = env_parse("FEW_SHOT_CANDIDATE_LIMIT", 200usize)?;
+        if !(1..=1_000).contains(&few_shot_candidate_limit) {
+            return Err(ConfigError {
+                key: "FEW_SHOT_CANDIDATE_LIMIT",
+                message: "must be in 1..=1000".to_string(),
+            });
+        }
+        let few_shot_admin_token = optional_env("FEW_SHOT_ADMIN_TOKEN");
+
         Ok(Self {
             env,
             host,
@@ -235,6 +290,13 @@ impl AppConfig {
             profile_max_alpha,
             profile_min_update_interval_secs,
             profile_max_observations,
+            few_shot_enabled,
+            few_shot_top_k,
+            few_shot_token_budget,
+            few_shot_min_score,
+            few_shot_max_snippet_chars,
+            few_shot_candidate_limit,
+            few_shot_admin_token,
         })
     }
 }
@@ -259,6 +321,13 @@ impl Default for AppConfig {
             profile_max_alpha: 0.6,
             profile_min_update_interval_secs: 60,
             profile_max_observations: 1000,
+            few_shot_enabled: true,
+            few_shot_top_k: 3,
+            few_shot_token_budget: 1_200,
+            few_shot_min_score: 0.15,
+            few_shot_max_snippet_chars: 4_000,
+            few_shot_candidate_limit: 200,
+            few_shot_admin_token: None,
         }
     }
 }

@@ -18,6 +18,7 @@
 │   │   ├── db/                 # SQLite 连接池、迁移执行、种子数据
 │   │   ├── models.rs           # 核心业务领域模型（Decimal 金额）
 │   │   ├── profile/            # 用户画像引擎（EWMA / 防抖动 / Prompt 注入）
+│   │   ├── few_shot/           # Few-Shot 模版检索（场景过滤 / 画像排序 / token 预算）
 │   │   ├── repository/         # 数据访问层 + 原子能力（create_order 等）
 │   │   ├── error.rs            # 全局错误码规范 + AppError
 │   │   ├── response.rs         # 统一响应结构 {code, msg, data}
@@ -27,7 +28,7 @@
 │   │   ├── middleware/         # 鉴权 / 限流 / 超时中间件
 │   │   ├── routes/             # 路由注册与端点
 │   │   └── bin/intimeui-seed.rs # 种子数据一键加载 CLI
-│   └── tests/                  # 集成测试（api.rs / data_model.rs / profile_engine.rs / user_profile.rs）
+│   └── tests/                  # 集成测试（api / data_model / profile_engine / user_profile / few_shot）
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
 ├── deploy/                     # 部署参考（systemd 单元）
 ├── Dockerfile
@@ -45,7 +46,9 @@
   - 健康检查：`/healthz`（存活）、`/readyz`（含数据库探测）；
   - 数据底座：用户 / 商品 / 订单 / 订单项 / 操作记录五张表，版本化迁移 + 幂等种子数据；
   - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）；
-  - 用户画像引擎：EWMA 偏好计算、单步限幅 / 死区 / 更新频率控制、冷启动置信度、Prompt 可注入 JSON（REQ-202610-1176）。
+  - 用户画像引擎：EWMA 偏好计算、单步限幅 / 死区 / 更新频率控制、冷启动置信度、Prompt 可注入 JSON（REQ-202610-1176）；
+  - Few-Shot 模版检索（RAG）：场景硬过滤 + 语义 / 画像 / 质量加权排序、token 预算裁剪、
+    空库 / 低置信安全降级，可直接把片段段落注入 Prompt（REQ-202610-1183）。
 
 ### 快速开始（本地）
 
@@ -100,6 +103,13 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | `PROFILE_MAX_ALPHA` | `0.6` | 画像 EWMA 平滑系数上限，`[base, 1]` |
 | `PROFILE_MIN_UPDATE_INTERVAL_SECS` | `60` | 画像自动更新最小间隔（秒） |
 | `PROFILE_MAX_OBSERVATIONS` | `1000` | 单次画像刷新最多处理样本数 |
+| `FEW_SHOT_ENABLED` | `true` | Few-Shot 检索总开关 |
+| `FEW_SHOT_TOP_K` | `3` | 单次返回片段数上限（1~10） |
+| `FEW_SHOT_TOKEN_BUDGET` | `1200` | Prompt 片段 token 预算（64~8000） |
+| `FEW_SHOT_MIN_SCORE` | `0.15` | 最低相关性阈值（0~1），低于该值安全降级 |
+| `FEW_SHOT_MAX_SNIPPET_CHARS` | `4000` | 单片段最大字符数（200~20000） |
+| `FEW_SHOT_CANDIDATE_LIMIT` | `200` | 单场景候选集上限（1~1000） |
+| `FEW_SHOT_ADMIN_TOKEN` | 空 | 片段写接口管理令牌；设置后需携带 `X-Few-Shot-Token` |
 
 > **密钥管理**：仅通过环境变量 / Secrets 注入，严禁写入仓库或数据库。生产环境请用部署平台（systemd `EnvironmentFile`、Docker secrets、K8s Secret 等）下发。
 
@@ -134,6 +144,10 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | GET | `/api/v1/users/{user_id}/profile` | 是 | 读取用户画像（冷启动返回默认值） |
 | PUT | `/api/v1/users/{user_id}/profile` | 是 | 主动设置偏好（font_scale / density / theme / radius / spacing） |
 | POST | `/api/v1/users/{user_id}/profile/refresh` | 是 | 按埋点 / 调研样本重算画像（EWMA） |
+| GET | `/api/v1/few-shot/snippets` | 是 | 分页列出 Few-Shot 片段（可按场景过滤） |
+| POST | `/api/v1/few-shot/snippets` | 是 | 登记 / 幂等更新片段（可配管理令牌） |
+| POST | `/api/v1/few-shot/snippets/{id}/feedback` | 是 | 记录片段满意度反馈 |
+| POST | `/api/v1/few-shot/retrieve` | 是 | 按场景 / 画像 / 语义检索并注入 Prompt |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 
@@ -149,6 +163,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | `order_items` | 订单项（商品名称/单价为下单时快照） |
 | `operation_records` | 原子能力操作审计（create_order / query_user_balance / update_item_status / delete_record） |
 | `user_profiles` | 用户画像（偏好向量 / 置信度 / 样本数 / 版本 / 冷启动标记） |
+| `ui_few_shot_snippets` | Few-Shot 组件片段库（来源 / 场景 / HTML / 风格 / 满意度 / 反馈统计） |
 
 **金额精度**：SQLite 没有原生 `DECIMAL`，`NUMERIC` 亲和性会退化为 IEEE-754 浮点。
 因此数据库以「分」为单位的整数（`*_cents`）精确存储，Rust 领域层统一使用
@@ -166,6 +181,16 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 `GET /api/v1/users/{user_id}/profile` 返回的 `prompt_profile` 是可直接注入 Prompt 的扁平 JSON。
 
 完整算法、API 契约与调参说明见 [`docs/user-profile-engine.md`](docs/user-profile-engine.md)。
+
+### Few-Shot 模版检索（REQ-202610-1183）
+
+`server/src/few_shot/` 实现「场景硬过滤 → 语义 / 画像 / 质量加权排序 → token 预算渲染」的
+轻量 RAG 链路：中文单字 + 二元组词法相似度、画像风格亲和度、显式 / 隐式满意度共同打分；
+空库、低置信、预算不足时返回 `degraded=true` 的空片段，不影响生成主链路。
+片段 HTML 作为不可信数据做危险标记检查，并用长于内容的代码围栏包裹后注入 Prompt。
+
+完整设计、评分公式、降级矩阵、API 示例与人工抽检清单见
+[`docs/few-shot-rag.md`](docs/few-shot-rag.md)。
 
 **种子数据一键加载**：
 

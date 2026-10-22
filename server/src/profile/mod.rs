@@ -20,5 +20,6 @@ pub use model::{
     FONT_SCALE_MIN, RADIUS_MAX, RADIUS_MIN, SPACING_MAX, SPACING_MIN, THEME_DARK_THRESHOLD,
 };
 pub use signals::{
-    Observation, ObservationSource, PartialPreferenceVector, SurveySample, TelemetrySample,
+    merge_targets, Observation, ObservationSource, PartialPreferenceVector, SurveySample,
+    TelemetrySample,
 };

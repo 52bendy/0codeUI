@@ -4,6 +4,7 @@
 //! 金额在数据库中以「分」存储，在领域层以 [`rust_decimal::Decimal`] 暴露。
 
 mod capabilities;
+mod few_shot;
 mod orders;
 mod products;
 mod profiles;
