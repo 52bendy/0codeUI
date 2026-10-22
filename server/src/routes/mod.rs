@@ -6,8 +6,10 @@
 //! - 未匹配路径统一返回 404 响应结构。
 
 pub mod example;
+pub mod few_shot;
 pub mod health;
 pub mod orders;
+pub mod profiles;
 
 use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post};
@@ -33,6 +35,23 @@ pub fn router(state: AppState) -> Router {
             get(orders::order_business_data),
         )
         .route("/api/v1/users/{user_id}/balance", get(orders::user_balance))
+        .route(
+            "/api/v1/users/{user_id}/profile",
+            get(profiles::get_profile).put(profiles::put_profile),
+        )
+        .route(
+            "/api/v1/users/{user_id}/profile/refresh",
+            post(profiles::refresh_profile),
+        )
+        .route(
+            "/api/v1/few-shot/snippets",
+            get(few_shot::list_snippets).post(few_shot::register_snippet),
+        )
+        .route(
+            "/api/v1/few-shot/snippets/{id}/feedback",
+            post(few_shot::snippet_feedback),
+        )
+        .route("/api/v1/few-shot/retrieve", post(few_shot::retrieve))
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
     Router::new()

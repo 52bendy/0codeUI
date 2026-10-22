@@ -16,8 +16,10 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod few_shot;
 pub mod middleware;
 pub mod models;
+pub mod profile;
 pub mod repository;
 pub mod response;
 pub mod routes;
