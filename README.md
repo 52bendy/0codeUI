@@ -23,12 +23,15 @@
 │   │   ├── state.rs            # 应用共享状态
 │   │   ├── telemetry.rs        # 结构化日志
 │   │   ├── validation.rs       # 请求参数校验提取器
+│   │   ├── model/              # UI 生成模型接入（配置 / provider / 网关 / 指标 / 校验）
 │   │   ├── middleware/         # 鉴权 / 限流 / 超时中间件
 │   │   ├── routes/             # 路由注册与端点
-│   │   └── bin/intimeui-seed.rs # 种子数据一键加载 CLI
-│   └── tests/                  # 集成测试（api.rs / data_model.rs）
+│   │   ├── bin/intimeui-seed.rs # 种子数据一键加载 CLI
+│   │   └── bin/intimeui-model-bench.rs # 模型延迟 / 成本基线 CLI
+│   └── tests/                  # 集成测试（api.rs / data_model.rs / model_api.rs）
+├── docs/                       # 模型推理部署与延迟基线文档
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
-├── deploy/                     # 部署参考（systemd 单元）
+├── deploy/                     # 部署参考（systemd 单元 / 模型推理 compose）
 ├── Dockerfile
 └── .env.example                # 环境变量样例（不含任何真实密钥）
 ```
@@ -43,7 +46,10 @@
   - 结构化日志（dev pretty / prod json）与请求 ID 贯穿；
   - 健康检查：`/healthz`（存活）、`/readyz`（含数据库探测）；
   - 数据底座：用户 / 商品 / 订单 / 订单项 / 操作记录五张表，版本化迁移 + 幂等种子数据；
-  - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）。
+  - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）；
+  - **UI 生成模型接入（REQ-202610-1181）**：OpenAI 兼容 provider（vLLM / Ollama / DeepSeek）、
+    并发信号量 + 有界排队、超时 / 重试 / 备用模型、多模型灰度、SSE 流式输出、
+    单文件 HTML 安全校验、延迟分位与 token / 成本指标。
 
 ### 快速开始（本地）
 
@@ -76,6 +82,12 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
   -H 'Authorization: Bearer dev:1001' \
   -H 'Content-Type: application/json' \
   -d '{"message":"hello","priority":5}'
+
+# 8. UI 生成（默认 mock provider；真实模型部署见 docs/model-inference-deployment.md）
+curl -s -X POST http://127.0.0.1:8080/api/v1/ui/model/generate \
+  -H 'Authorization: Bearer dev:1001' \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"生成一个订单详情页，黑白灰主题，支持明暗切换"}'
 ```
 
 ### 环境变量
@@ -94,6 +106,21 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | `RATE_LIMIT_BURST` | `100` | 令牌桶容量（突发额度） |
 | `REQUEST_TIMEOUT_SECS` | `30` | 请求处理超时 |
 | `DATABASE_URL` | `sqlite://data/intimeui.db` | SQLite 连接串（文件自动创建；测试可用 `sqlite::memory:`） |
+| `MODEL_ENABLED` | `true` | 是否启用模型接口 |
+| `MODEL_PROVIDER` | `mock` | `mock`（仅 dev / test）或 `openai_compatible`（vLLM / Ollama / DeepSeek） |
+| `MODEL_BASE_URL` | `http://127.0.0.1:8000/v1` | OpenAI 兼容服务地址（不含 `/chat/completions`） |
+| `MODEL_API_KEY` | 空 | 服务端密钥；本机 vLLM 可留空 |
+| `MODEL_NAME` | `Qwen2.5-Coder-7B-Instruct-AWQ` | 主模型 |
+| `MODEL_FALLBACKS` | 空 | 备用模型链（逗号分隔） |
+| `MODEL_CANARY_MODEL` / `MODEL_CANARY_PERCENT` | 空 / `0` | 灰度模型与流量百分比（0–100） |
+| `MODEL_REQUEST_TIMEOUT_MS` | `1500` | 非流式请求总超时 |
+| `MODEL_STREAM_TIMEOUT_MS` | `30000` | 流式分片读取超时（空闲超时） |
+| `MODEL_MAX_CONCURRENCY` | `4` | 最大并发推理数（不超过 vLLM `--max-num-seqs`） |
+| `MODEL_MAX_QUEUE` | `64` | 最大排队数 |
+| `MODEL_QUEUE_TIMEOUT_MS` | `1500` | 排队等待上限 |
+| `MODEL_MAX_RETRIES` | `1` | 可重试错误的重试次数 |
+| `MODEL_MAX_TOKENS` / `MODEL_TEMPERATURE` | `2048` / `0.2` | 默认生成参数 |
+| `MODEL_PRICE_INPUT_PER_1K` / `MODEL_PRICE_OUTPUT_PER_1K` | `0` / `0` | 成本估算单价（美元 / 千 token；自托管填 0） |
 
 > **密钥管理**：仅通过环境变量 / Secrets 注入，严禁写入仓库或数据库。生产环境请用部署平台（systemd `EnvironmentFile`、Docker secrets、K8s Secret 等）下发。
 
@@ -111,7 +138,8 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | `40900` | 409 | 资源冲突（唯一键重复） |
 | `42900` | 429 | 触发限流（附 `Retry-After`） |
 | `50000` | 500 | 服务内部错误 |
-| `50300` | 503 | 服务暂不可用 |
+| `50200` | 502 | 模型上游错误 / 输出不合法 |
+| `50300` | 503 | 服务暂不可用（含模型排队超时） |
 | `50400` | 504 | 请求处理超时 |
 
 ### 接口一览（M0 示例）
@@ -125,6 +153,10 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | POST | `/api/v1/echo` | 是 | 参数校验示例（`message` 1~500 字；`priority` 1~9） |
 | GET | `/api/v1/orders/{order_id}/business-data` | 是 | 订单业务数据（PRD §5.1 `business_data` 同构） |
 | GET | `/api/v1/users/{user_id}/balance` | 是 | 用户余额（精确十进制金额） |
+| POST | `/api/v1/ui/model/generate` | 是 | UI 生成（非流式，返回单文件 HTML / 耗时 / token / 成本） |
+| POST | `/api/v1/ui/model/stream` | 是 | UI 生成（SSE：`meta` → `delta` → `done`） |
+| GET | `/api/v1/ui/model/info` | 是 | 模型提供者、模型列表与并发 / 超时配置 |
+| GET | `/api/v1/ui/model/metrics` | 是 | 请求量、P50/P95/P99、token 与成本快照 |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 
@@ -167,6 +199,10 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo build --release
+
+# 模型延迟 / 成本基线（mock 无需 GPU；真实模型先按部署文档启动 vLLM）
+cargo run --release -p intimeui-server --bin intimeui-model-bench -- \
+  --requests 100 --concurrency 4 --output /tmp/model-bench.json
 ```
 
 ### CI
@@ -174,6 +210,10 @@ cargo build --release
 `.github/workflows/ci.yml`：push / PR 触发，执行 fmt 检查、clippy（`-D warnings`）、构建与测试。
 
 ### 部署
+
+**模型推理（24GB 显存，vLLM）**：见 [`docs/model-inference-deployment.md`](docs/model-inference-deployment.md)，
+参考 compose 位于 [`deploy/model/docker-compose.yml`](deploy/model/docker-compose.yml)；
+延迟 / 成本基线见 [`docs/model-latency-baseline.md`](docs/model-latency-baseline.md)。
 
 **方式一：systemd（裸机 / VPS）**
 

@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
+use crate::model::config::ModelConfig;
+
 /// 运行环境。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
@@ -104,6 +106,8 @@ pub struct AppConfig {
     pub request_timeout_secs: u64,
     /// 数据库连接串：`DATABASE_URL`（默认 `sqlite://data/intimeui.db`）。
     pub database_url: String,
+    /// UI 生成模型接入与推理服务配置（`MODEL_*`）。
+    pub model: ModelConfig,
 }
 
 impl AppConfig {
@@ -179,6 +183,13 @@ impl AppConfig {
             });
         }
         let database_url = env_string("DATABASE_URL", "sqlite://data/intimeui.db");
+        let model = ModelConfig::from_env()?;
+        if env == Environment::Prod && model.provider.is_mock() {
+            return Err(ConfigError {
+                key: "MODEL_PROVIDER",
+                message: "mock provider is not allowed in prod".to_string(),
+            });
+        }
 
         Ok(Self {
             env,
@@ -193,6 +204,7 @@ impl AppConfig {
             rate_limit_burst,
             request_timeout_secs,
             database_url,
+            model,
         })
     }
 }
@@ -213,22 +225,23 @@ impl Default for AppConfig {
             rate_limit_burst: 100,
             request_timeout_secs: 30,
             database_url: "sqlite://data/intimeui.db".to_string(),
+            model: ModelConfig::default(),
         }
     }
 }
 
-fn optional_env(key: &str) -> Option<String> {
+pub(crate) fn optional_env(key: &str) -> Option<String> {
     std::env::var(key)
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
-fn env_string(key: &str, default: &str) -> String {
+pub(crate) fn env_string(key: &str, default: &str) -> String {
     optional_env(key).unwrap_or_else(|| default.to_string())
 }
 
-fn env_parse<T>(key: &'static str, default: T) -> Result<T, ConfigError>
+pub(crate) fn env_parse<T>(key: &'static str, default: T) -> Result<T, ConfigError>
 where
     T: FromStr,
     T::Err: fmt::Display,
@@ -242,7 +255,7 @@ where
     }
 }
 
-fn parse_bool(key: &'static str, value: &str) -> Result<bool, ConfigError> {
+pub(crate) fn parse_bool(key: &'static str, value: &str) -> Result<bool, ConfigError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
         "0" | "false" | "no" | "off" => Ok(false),
