@@ -3,7 +3,9 @@
 //! - 公开路由：`/`、`/healthz`、`/readyz`、`/api/v1/ping`；
 //! - 受保护路由（需鉴权）：`/api/v1/me`、`/api/v1/echo`、
 //!   `/api/v1/orders/{order_id}/business-data`、`/api/v1/users/{user_id}/balance`、
-//!   `/api/v1/telemetry/event`、`/api/v1/telemetry/events`、`/api/v1/telemetry/aggregate`；
+//!   `/api/v1/telemetry/event`、`/api/v1/telemetry/events`、`/api/v1/telemetry/aggregate`、
+//!   `/api/v1/intent/execute`、`/api/v1/intent/understand`、`/api/v1/intent/tools`、
+//!   `/api/v1/ui/generate`、`/api/v1/ui/render`；
 //! - 未匹配路径统一返回 404 响应结构。
 
 pub mod example;
@@ -12,6 +14,8 @@ pub mod intent;
 pub mod intent_agent;
 pub mod orders;
 pub mod telemetry;
+pub mod ui;
+pub mod ui_render;
 
 use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post};
@@ -46,6 +50,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/intent/execute", post(intent::execute))
         .route("/api/v1/intent/understand", post(intent_agent::understand))
         .route("/api/v1/intent/tools", get(intent_agent::tools))
+        .route("/api/v1/ui/generate", post(ui::generate))
+        .route("/api/v1/ui/render", post(ui_render::render_ui))
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
     Router::new()

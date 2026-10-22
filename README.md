@@ -26,10 +26,13 @@
 │   │   ├── telemetry.rs        # 结构化日志
 │   │   ├── telemetry_events.rs # 埋点事件模型与校验（REQ-202610-1174）
 │   │   ├── validation.rs       # 请求参数校验提取器
+│   │   ├── ui/                 # UI 生成契约、场景注册、模板与单文件 HTML 渲染
 │   │   ├── middleware/         # 鉴权 / 限流 / 超时 / 埋点配额 / 防重放接入点
 │   │   ├── routes/             # 路由注册与端点
+│   │   ├── ui_template/        # 静态模板引擎与兜底渲染（M1）
 │   │   └── bin/intimeui-seed.rs # 种子数据一键加载 CLI
-│   └── tests/                  # 集成测试（api / data_model / intent_execute / intent_agent / 联调）
+│   ├── templates/              # 单文件 HTML 模板（编译期内嵌）
+│   └── tests/                  # 集成测试（api / data_model / intent / ui / 模板引擎 / 联调）
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
 ├── deploy/                     # 部署参考（systemd 单元）
 ├── Dockerfile
@@ -49,6 +52,8 @@
   - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）；
   - 埋点采集：单条 / 批量事件上报、字段校验、按用户防刷配额、用户维度明细与聚合查询（REQ-202610-1174）。
   - 意图理解与 Tool Call Agent（M3）：自然语言 → JSON Schema 决策树 → 函数调用序列，支持上下文指代消歧、多意图排序、非法输出拦截与澄清追问（详见 [`docs/intent-tool-call-agent.md`](docs/intent-tool-call-agent.md)）。
+  - UI 生成（M1 第一阶段）：`POST /api/v1/ui/generate`，场景注册表（首批 3 个模板场景）与单文件 HTML 渲染。
+  - 静态模板引擎：模板库 + Data Payload 填充（默认 HTML 转义）+ 内联交互绑定，`POST /api/v1/ui/render` 输出单文件 HTML，P95 远低于 200ms；同时作为动态生成管线的兜底通道。
 
 ### 快速开始（本地）
 
@@ -95,6 +100,21 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/intent/execute \
       "entity_id": "ORD_20261014_001"
     }
   }'
+
+# 9. UI 生成（模板兜底 → 单文件 HTML）
+curl -s -X POST http://127.0.0.1:8080/api/v1/ui/generate \
+  -H 'Authorization: Bearer dev:usr_9527' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "user_id": "usr_9527",
+    "scene_code": "ORDER_DETAIL_PAGE",
+    "device_info": {"screen_width": 390, "screen_height": 844, "platform": "android"},
+    "business_data": {
+      "order_id": "ORD_20261014_001",
+      "status": "PAID",
+      "items": [{"name": "智能降噪耳机", "price": 299.00, "qty": 1}]
+    }
+  }'
 ```
 
 ### 环境变量
@@ -133,6 +153,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/intent/execute \
 | `40100` | 401 | 未认证 / 凭据无效 |
 | `40300` | 403 | 无权限 |
 | `40400` | 404 | 资源不存在 |
+| `40410` | 404 | 未知场景（UI 生成接口，响应列出可用场景） |
 | `40900` | 409 | 资源冲突（唯一键重复） |
 | `42900` | 429 | 触发限流（附 `Retry-After`） |
 | `50000` | 500 | 服务内部错误 |
@@ -156,6 +177,8 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/intent/execute \
 | POST | `/api/v1/intent/execute` | 是 | 意图执行（PRD §5.2；读类直接执行，写 / 删类返回确认卡片） |
 | POST | `/api/v1/intent/understand` | 是 | 自然语言 → 结构化决策树 / 澄清追问 |
 | GET | `/api/v1/intent/tools` | 是 | 意图 Agent 可用能力清单（OpenAI function 定义） |
+| POST | `/api/v1/ui/generate` | 是 | UI 生成（场景注册 + 单文件 HTML，见下节） |
+| POST | `/api/v1/ui/render` | 是 | 静态模板渲染（单文件 HTML，兜底通道） |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 意图执行契约详见 [`docs/intent-execute-contract.md`](docs/intent-execute-contract.md)。
@@ -250,6 +273,59 @@ curl -s 'http://127.0.0.1:8080/api/v1/telemetry/aggregate?user_id=u100' \
 `TELEMETRY_REPLAY_ENABLED=true` 时先校验 `x-timestamp` / `x-nonce` / `x-signature`
 三个头与 ±300s 时间窗，完整 HMAC 签名与 nonce 去重由 REQ-202610-1186 接入。
 
+### UI 生成接口（M1 第一阶段）
+
+完整契约见 [`docs/ui-generate-contract.md`](docs/ui-generate-contract.md)。
+
+**请求**：`POST /api/v1/ui/generate`
+
+```json
+{
+  "user_id": "usr_9527",
+  "scene_code": "ORDER_DETAIL_PAGE",
+  "device_info": { "screen_width": 390, "screen_height": 844, "platform": "android" },
+  "business_data": {
+    "order_id": "ORD_20261014_001",
+    "status": "PAID",
+    "items": [{ "name": "智能降噪耳机", "price": 299.00, "qty": 1 }]
+  }
+}
+```
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "msg": "ok",
+  "data": {
+    "render_type": "SINGLE_FILE_HTML",
+    "version": "template:ORDER_DETAIL_PAGE:v1",
+    "html_content": "<!DOCTYPE html>..."
+  }
+}
+```
+
+- `version` 由 `<strategy>:<scene_code>:<template_version>` 组成，渲染策略与模板版本可追溯；
+- 首批场景：`ORDER_DETAIL_PAGE`、`ORDER_LIST_PAGE`、`PRODUCT_DETAIL_PAGE`（均为 `template` / `v1`）；
+- 未知 `scene_code` 返回 `40410` 并列出可用场景；请求体 / 业务数据非法返回 `40000`；
+- 生产模式请求 `user_id` 必须与认证用户一致，否则返回 `40300`；
+- 输出为完整单文件 HTML：内联 CSS/JS、CSP 限制、无外部资源、业务字段全部 HTML 转义。
+
+场景注册表位于 `server/src/ui/scene.rs`，模板实现位于 `server/src/ui/template.rs`；
+新增场景需同步补充场景契约、模板与 `server/tests/ui_generate.rs` 契约测试。
+### 静态模板引擎与兜底渲染（M1 · REQ-202610-1172）
+
+- **模板库**：`server/templates/*.html` 编译期内嵌；首批 `ORDER_DETAIL_PAGE`（订单详情，兼容 PRD §5.1 `business_data`）。
+- **填充引擎**：`{{path}}` 插值、`{{#items}}` 迭代、`{{^items}}` 反向区块；所有插值默认 HTML 转义。
+- **内联交互**：模板内 `button.onclick` 直接 `fetch` 后端业务接口（如刷新订单状态），不嵌入任何凭据。
+- **接口**：`POST /api/v1/ui/render`，请求 `{scene_code, business_data, device_info?}`，返回 `{html, strategy, template_version, render_ms}`。
+- **与 03 打通**：`POST /api/v1/ui/generate` 的 `ORDER_DETAIL_PAGE` 已复用本引擎，两个入口输出同一份模板。
+- **兜底入口**：`TemplateEngine::render_fallback` 供动态生成管线（REQ-202610-1185）在超时 / 校验失败时调用。
+- **性能**：引擎级 P95 ≈ 0.4ms，HTTP 端到端 P95 ≈ 3.3ms（本机 debug 构建，方法见文档）。
+
+详见 [`docs/static-template-engine.md`](docs/static-template-engine.md)。
+
 ### 测试与检查
 
 ```bash
@@ -298,6 +374,7 @@ docker exec intimeui-server intimeui-seed
 ## 路线图（对应 REQ-202610-1168 拆解）
 
 - **M0 基础工程**：REQ-202610-1169 服务基座（已交付）、REQ-202610-1170 数据模型与种子数据（已交付）
+- **M1 模板兜底链路**：REQ-202610-1171 UI 生成接口与场景注册（已交付）、REQ-202610-1172 静态模板引擎（已交付）、REQ-202610-1173 单文件 HTML 校验器
 - **M2 埋点画像**：REQ-202610-1174 埋点事件采集（已交付）；REQ-202610-1175 / 1176 待排期
 - **M3 意图引擎**：REQ-202610-1180 意图理解与 Tool Call Agent（已交付）
-- M1 模板兜底链路 / M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收
+- M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收
