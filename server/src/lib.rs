@@ -16,6 +16,7 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod html_validator;
 pub mod middleware;
 pub mod models;
 pub mod repository;

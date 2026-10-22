@@ -23,10 +23,13 @@
 │   │   ├── state.rs            # 应用共享状态
 │   │   ├── telemetry.rs        # 结构化日志
 │   │   ├── validation.rs       # 请求参数校验提取器
+│   │   ├── html_validator/     # 单文件 HTML 输出校验器（结构 + 单文件 + 安全基线）
 │   │   ├── middleware/         # 鉴权 / 限流 / 超时中间件
 │   │   ├── routes/             # 路由注册与端点
-│   │   └── bin/intimeui-seed.rs # 种子数据一键加载 CLI
-│   └── tests/                  # 集成测试（api.rs / data_model.rs）
+│   │   └── bin/
+│   │       ├── intimeui-seed.rs     # 种子数据一键加载 CLI
+│   │       └── intimeui-validate.rs # 单文件 HTML 校验 CLI
+│   └── tests/                  # 集成测试（api.rs / data_model.rs / html_validator.rs / validate_cli.rs）
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
 ├── deploy/                     # 部署参考（systemd 单元）
 ├── Dockerfile
@@ -160,6 +163,60 @@ cargo run -p intimeui-server --bin intimeui-seed -- --database-url sqlite://data
 
 种子加载使用 `INSERT OR IGNORE`，重复执行不会产生重复记录；返回本次实际插入行数。
 
+### 单文件 HTML 输出校验器
+
+AI 生成的单文件 HTML 在下发前必须经过校验（REQ-202610-1173）。校验器为纯函数、无 IO，可直接接入生成流水线，也可作为 CLI 单独使用。
+
+```rust
+use intimeui_server::html_validator::validate_single_file_html;
+
+let result = validate_single_file_html(html);
+if !result.valid {
+    // 按结构化问题决定重试 / 兜底模板，并写入日志
+    for issue in result.errors() {
+        eprintln!("{:?} @ {}:{} {}", issue.kind, issue.position.line, issue.position.column, issue.message);
+    }
+}
+```
+
+**校验范围**：
+
+- 结构完整性：`DOCTYPE` / `html` / `head` / `body` 必须存在且顺序正确；标签必须闭合、嵌套合法；截断文档、未闭合注释 / 标签 / `script` / `style` 均会被拦截；
+- 单文件约束：禁止 `<script src>`、外部样式表、外链图片 / 字体 / 媒体与 CSS `url()` / `@import`；相对路径同样视为外部依赖；`data:` 资源默认允许（可配置关闭）；
+- 安全基线：事件属性白名单、禁用 `iframe` / `object` / `base` 等元素、拦截 `javascript:` / `vbscript:`（含实体与 CSS 转义混淆）、禁止 `meta refresh`、CSS `expression()` / `-moz-binding` / `behavior`；
+- 结构化结果：每条问题包含 `kind`、`severity`、`message`、`position`（字节偏移 + 1-based 行列）与 `snippet`，便于定位与自动重试；
+- 资源上限：默认 2 MiB、最大嵌套 128 层、最多 100 条问题，超出后返回 `too_large` / `max_depth_exceeded` / `too_many_issues`。
+
+**CLI**：
+
+```bash
+# 校验文件：退出码 0 通过、1 不通过、2 读取失败
+cargo run -p intimeui-server --bin intimeui-validate -- page.html
+
+# 或从标准输入读取
+cat page.html | cargo run -p intimeui-server --bin intimeui-validate -- -
+```
+
+输出示例（截断）：
+
+```json
+{
+  "valid": false,
+  "issues": [
+    {
+      "kind": "unclosed_tag",
+      "severity": "error",
+      "message": "标签 <div> 未闭合（文档结束）",
+      "position": { "offset": 96, "line": 6, "column": 5 },
+      "snippet": "<div class=\"card\">"
+    }
+  ],
+  "stats": { "bytes": 120, "elements": 9, "scripts": 1, "styles": 1, "max_depth": 4 }
+}
+```
+
+**可配置项**（`ValidatorConfig`）：`max_bytes`、`max_depth`、`max_issues`、`require_doctype`、`allow_data_uris`、`allowed_external_hosts`、`allowed_event_attributes`、`forbidden_elements`。
+
 ### 测试与检查
 
 ```bash
@@ -207,5 +264,6 @@ docker exec intimeui-server intimeui-seed
 
 ## 路线图（对应 REQ-202610-1168 拆解）
 
-- **M0 基础工程**：REQ-202610-1169 服务基座（已交付）、REQ-202610-1170 数据模型与种子数据（本批交付）
+- **M0 基础工程**：REQ-202610-1169 服务基座（已交付）、REQ-202610-1170 数据模型与种子数据（已交付）
+- **M1/M5 输出校验**：REQ-202610-1173 单文件 HTML 输出校验器（已交付：库 API + CLI）
 - M1 模板兜底链路 / M2 埋点画像 / M3 意图引擎 / M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收
