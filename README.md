@@ -34,6 +34,10 @@
 │   │   └── bin/intimeui-seed.rs # 种子数据一键加载 CLI
 │   ├── templates/              # 单文件 HTML 模板（编译期内嵌）
 │   └── tests/                  # 集成测试（api / data_model / intent / ui / 模板引擎 / 联调）
+├── android/                    # Android 客户端（M7 WebView 容器 + 桥接 + 埋点 + 防重放）
+│   ├── core/                   # 纯 JVM 核心：签名 / 埋点 / 意图 / 桥接协议
+│   ├── app/                    # WebView 容器、原生确认面板与演示页
+│   └── docs/android-client.md  # 构建、协议、联调与验收说明
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
 ├── deploy/                     # 部署参考（systemd 单元）
 ├── Dockerfile
@@ -56,6 +60,7 @@
   - 意图理解与 Tool Call Agent（M3）：自然语言 → JSON Schema 决策树 → 函数调用序列，支持上下文指代消歧、多意图排序、非法输出拦截与澄清追问（详见 [`docs/intent-tool-call-agent.md`](docs/intent-tool-call-agent.md)）。
   - UI 生成（M1 第一阶段）：`POST /api/v1/ui/generate`，场景注册表（首批 3 个模板场景）与单文件 HTML 渲染。
   - 静态模板引擎：模板库 + Data Payload 填充（默认 HTML 转义）+ 内联交互绑定，`POST /api/v1/ui/render` 输出单文件 HTML，P95 远低于 200ms；同时作为动态生成管线的兜底通道。
+  - Android 客户端（M7）：WebView 单文件 HTML 渲染容器、JS-Native 桥接、`UI_INTERACTION` 意图链路、确认卡片/执行回执、四项埋点聚合与 `INTIMEUI-REPLAY-V1` 客户端签名；详见 [`android/README.md`](android/README.md)。
 
 ### 快速开始（本地）
 
