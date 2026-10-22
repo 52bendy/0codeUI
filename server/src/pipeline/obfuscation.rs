@@ -4,6 +4,10 @@
 //! [`HtmlObfuscator`] 抽象，便于测试注入、按配置关闭，以及在依赖分支未合入时
 //! 保持管线可编译。混淆失败被视为管线失败并触发静态模板兜底。
 
+use std::sync::Arc;
+
+use crate::obfuscation::{ObfuscationConfig, ObfuscationEngine};
+
 /// 混淆结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObfuscationOutput {
@@ -32,6 +36,33 @@ impl HtmlObfuscator for NoopObfuscator {
         Ok(ObfuscationOutput {
             html: html.to_string(),
             applied: false,
+        })
+    }
+}
+
+/// 基于 REQ-202610-1184 [`ObfuscationEngine`] 的适配器。
+pub struct EngineObfuscator {
+    engine: Arc<ObfuscationEngine>,
+    config: ObfuscationConfig,
+}
+
+impl EngineObfuscator {
+    /// 使用共享引擎与固定配置创建适配器。
+    pub fn new(engine: Arc<ObfuscationEngine>, config: ObfuscationConfig) -> Self {
+        Self { engine, config }
+    }
+}
+
+impl HtmlObfuscator for EngineObfuscator {
+    fn obfuscate(&self, html: &str, session_id: Option<&str>) -> Result<ObfuscationOutput, String> {
+        let result = self
+            .engine
+            .obfuscate(html, &self.config, session_id)
+            .map_err(|error| error.to_string())?;
+        let applied = self.config.level.enabled();
+        Ok(ObfuscationOutput {
+            html: result.html,
+            applied,
         })
     }
 }

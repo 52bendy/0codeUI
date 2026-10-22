@@ -15,8 +15,8 @@ pub mod orchestrator;
 
 pub use config::{ObfuscationMode, PipelineConfig};
 pub use metrics::{PipelineMetrics, PipelineMetricsSnapshot};
-pub use obfuscation::{HtmlObfuscator, NoopObfuscator, ObfuscationOutput};
+pub use obfuscation::{EngineObfuscator, HtmlObfuscator, NoopObfuscator, ObfuscationOutput};
 pub use orchestrator::{
-    dynamic_version, DegradationReason, Pipeline, PipelineError, PipelineInfo, PipelineOutcome,
-    PipelineRequest, PipelineTimings,
+    dynamic_version, DegradationReason, FallbackPreview, Pipeline, PipelineError, PipelineInfo,
+    PipelineOutcome, PipelineRequest, PipelineStreamEvent, PipelineTimings,
 };

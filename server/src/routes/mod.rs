@@ -3,7 +3,7 @@
 //! - 公开路由：`/`、`/healthz`、`/readyz`、`/api/v1/ping`；
 //! - 受保护路由（需鉴权）：`/api/v1/me`、`/api/v1/echo`、
 //!   `/api/v1/orders/{order_id}/business-data`、`/api/v1/users/{user_id}/balance`、
-//!   `/api/v1/ui/generate`；
+//!   `/api/v1/ui/generate`、`/api/v1/ui/render`、`/api/v1/ui/obfuscate`；
 //! - 未匹配路径统一返回 404 响应结构。
 
 pub mod example;
@@ -13,6 +13,7 @@ pub mod orders;
 pub mod pipeline;
 pub mod profiles;
 pub mod ui;
+pub mod ui_obfuscate;
 pub mod ui_render;
 
 use axum::middleware::from_fn_with_state;
@@ -44,7 +45,12 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/ui/generate/dynamic",
             post(pipeline::generate_dynamic),
         )
+        .route(
+            "/api/v1/ui/generate/dynamic/stream",
+            post(pipeline::generate_dynamic_stream),
+        )
         .route("/api/v1/ui/render", post(ui_render::render_ui))
+        .route("/api/v1/ui/obfuscate", post(ui_obfuscate::obfuscate))
         .route("/api/v1/ui/pipeline/metrics", get(pipeline::metrics))
         .route("/api/v1/ui/pipeline/info", get(pipeline::info))
         .route("/api/v1/ui/model/generate", post(model::generate))

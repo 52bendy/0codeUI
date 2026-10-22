@@ -23,7 +23,7 @@ use crate::prompt::{
     builtin_scene_constraints, PromptAssembler, PromptError, PROMPT_TEMPLATE_VERSION,
 };
 use crate::repository::Repository;
-use crate::ui::scene::REGISTRY;
+use crate::ui::scene::{SceneDefinition, REGISTRY};
 use crate::ui_template::{DeviceInfo, RenderedPage, TemplateEngine, TemplateError};
 
 use super::cache::{CachedGeneration, ResponseCache};
@@ -169,6 +169,49 @@ pub struct PipelineInfo {
     pub version_strategy: &'static str,
 }
 
+/// 流式首屏：预渲染的静态兜底页。
+#[derive(Debug, Clone, Serialize)]
+pub struct FallbackPreview {
+    /// 渲染类型，固定 `SINGLE_FILE_HTML`。
+    pub render_type: String,
+    /// 渲染策略，固定 `template`。
+    pub strategy: String,
+    /// 可追溯版本串 `template:<scene>:<template_version>`。
+    pub version: String,
+    /// 完整单文件 HTML。
+    pub html_content: String,
+    /// 模板渲染耗时（毫秒）。
+    pub render_ms: f64,
+}
+
+/// SSE 流式事件。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum PipelineStreamEvent {
+    /// 首屏静态兜底页（连接建立后立即下发，保证不白屏）。
+    Fallback {
+        /// 兜底页。
+        preview: FallbackPreview,
+    },
+    /// 动态生成成功（客户端可用它替换首屏兜底页）。
+    Result {
+        /// 完整管线输出。
+        outcome: PipelineOutcome,
+    },
+    /// 动态生成失败并降级，`outcome.html_content` 即首屏兜底页。
+    Degraded {
+        /// 完整管线输出。
+        outcome: PipelineOutcome,
+    },
+    /// 兜底页已下发、但后续流程出现无法降级的内部错误。
+    Error {
+        /// 错误码。
+        code: i32,
+        /// 错误说明。
+        message: String,
+    },
+}
+
 /// 管线错误（无法产出任何页面时返回）。
 #[derive(Debug, Error)]
 pub enum PipelineError {
@@ -190,12 +233,13 @@ pub enum PipelineError {
 }
 
 /// 动态生成管线。
+#[derive(Clone)]
 pub struct Pipeline {
     config: PipelineConfig,
     model: Arc<ModelGateway>,
     db: Arc<Db>,
     metrics: Arc<PipelineMetrics>,
-    cache: Option<ResponseCache>,
+    cache: Option<Arc<ResponseCache>>,
     obfuscator: Arc<dyn HtmlObfuscator>,
 }
 
@@ -212,9 +256,12 @@ impl Pipeline {
         db: Arc<Db>,
         obfuscator: Arc<dyn HtmlObfuscator>,
     ) -> Self {
-        let cache = config
-            .cache_enabled
-            .then(|| ResponseCache::new(config.cache_ttl_secs, config.cache_max_entries));
+        let cache = config.cache_enabled.then(|| {
+            Arc::new(ResponseCache::new(
+                config.cache_ttl_secs,
+                config.cache_max_entries,
+            ))
+        });
         let metrics = Arc::new(PipelineMetrics::new(config.timeout_ms));
         Self {
             config,
@@ -246,12 +293,11 @@ impl Pipeline {
         }
     }
 
-    /// 执行一次生成。
-    pub async fn generate(
+    /// 校验场景 / 设备 / 业务数据并预渲染静态兜底页。
+    fn prepare_fallback(
         &self,
-        request: PipelineRequest,
-    ) -> Result<PipelineOutcome, PipelineError> {
-        let started = Instant::now();
+        request: &PipelineRequest,
+    ) -> Result<(&'static SceneDefinition, RenderedPage, f64), PipelineError> {
         let scene = REGISTRY
             .get(&request.scene_code)
             .ok_or_else(|| PipelineError::SceneNotFound(request.scene_code.clone()))?;
@@ -266,7 +312,42 @@ impl Pipeline {
                 self.metrics.record_fallback_failure();
                 map_template_error(error)
             })?;
-        let fallback_prepare_ms = elapsed_ms(fallback_started);
+        Ok((scene, fallback, elapsed_ms(fallback_started)))
+    }
+
+    /// 预渲染流式首屏兜底页；不触发模型调用，供 SSE 端点立即下发。
+    pub fn render_fallback_preview(
+        &self,
+        request: &PipelineRequest,
+    ) -> Result<FallbackPreview, PipelineError> {
+        let (_, fallback, render_ms) = self.prepare_fallback(request)?;
+        // 首屏兜底页同样执行输出混淆；失败时退回原始模板，保证仍有页面。
+        let html = match self.obfuscate(&fallback.html, None) {
+            Ok((html, _, _)) => html,
+            Err(error) => {
+                tracing::warn!(error = %error, "fallback preview obfuscation failed");
+                fallback.html
+            }
+        };
+        Ok(FallbackPreview {
+            render_type: "SINGLE_FILE_HTML".to_string(),
+            strategy: "template".to_string(),
+            version: format!(
+                "template:{}:{}",
+                fallback.scene_code, fallback.template_version
+            ),
+            html_content: html,
+            render_ms,
+        })
+    }
+
+    /// 执行一次生成。
+    pub async fn generate(
+        &self,
+        request: PipelineRequest,
+    ) -> Result<PipelineOutcome, PipelineError> {
+        let started = Instant::now();
+        let (scene, fallback, fallback_prepare_ms) = self.prepare_fallback(&request)?;
 
         if !self.config.enabled {
             return Ok(self.degraded_outcome(
@@ -540,6 +621,17 @@ impl Pipeline {
         timings: PipelineTimings,
         cache_hit: bool,
     ) -> PipelineOutcome {
+        // 降级页也执行输出混淆；混淆失败时退回原始模板（优先保证不白屏）。
+        let (html, obfuscated, obfuscation_ms) = match self.obfuscate(&fallback.html, None) {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::warn!(error = %error, "fallback obfuscation failed; serving raw template");
+                (fallback.html.clone(), false, 0.0)
+            }
+        };
+        let mut timings = timings;
+        timings.obfuscation_ms = obfuscation_ms;
+        timings.total_ms += obfuscation_ms;
         let outcome = PipelineOutcome {
             render_type: "SINGLE_FILE_HTML".to_string(),
             strategy: "template".to_string(),
@@ -547,7 +639,7 @@ impl Pipeline {
                 "template:{}:{}",
                 fallback.scene_code, fallback.template_version
             ),
-            html_content: fallback.html.clone(),
+            html_content: html,
             degraded: true,
             degradation_reason: Some(reason),
             degradation_detail: detail,
@@ -558,7 +650,7 @@ impl Pipeline {
             estimated_cost_usd: 0.0,
             attempts: 0,
             timings,
-            obfuscated: false,
+            obfuscated,
         };
         self.metrics.record(&outcome);
         tracing::warn!(

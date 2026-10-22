@@ -117,6 +117,39 @@ async fn send_json(app: &axum::Router, request: Request<Body>) -> (StatusCode, V
     (status, value)
 }
 
+async fn send_sse(app: &axum::Router, request: Request<Body>) -> (StatusCode, String) {
+    let response = app.clone().oneshot(request).await.expect("request failed");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("failed to read body")
+        .to_bytes();
+    (
+        status,
+        String::from_utf8(bytes.to_vec()).expect("SSE body is not UTF-8"),
+    )
+}
+
+fn parse_sse_events(body: &str) -> Vec<(String, Value)> {
+    body.split("\n\n")
+        .filter_map(|chunk| {
+            let mut event = None;
+            let mut data = None;
+            for line in chunk.lines() {
+                if let Some(name) = line.strip_prefix("event: ") {
+                    event = Some(name.to_string());
+                }
+                if let Some(payload) = line.strip_prefix("data: ") {
+                    data = Some(serde_json::from_str(payload).expect("SSE data is not JSON"));
+                }
+            }
+            Some((event?, data?))
+        })
+        .collect()
+}
+
 fn order_body(order_id: &str) -> Value {
     json!({
         "user_id": "usr_9527",
@@ -462,4 +495,67 @@ async fn obfuscation_failure_degrades_to_template() {
         Some(intimeui_server::pipeline::DegradationReason::ObfuscationFailed)
     );
     assert!(outcome.html_content.contains("ORD_OBF_002"));
+}
+
+#[tokio::test]
+async fn streaming_emits_fallback_first_then_dynamic_result() {
+    let app = app_with(test_config()).await;
+    let (status, body) = send_sse(
+        &app,
+        with_bearer(post_json(
+            "/api/v1/ui/generate/dynamic/stream",
+            order_body("ORD_STREAM_001"),
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let events = parse_sse_events(&body);
+    assert!(events.len() >= 2, "expected fallback + result events");
+    assert_eq!(events[0].0, "fallback");
+    assert_eq!(events[0].1["preview"]["strategy"], "template");
+    assert!(events[0].1["preview"]["html_content"]
+        .as_str()
+        .unwrap()
+        .contains("ORD_STREAM_001"));
+
+    let (name, data) = events.last().unwrap();
+    assert_eq!(name, "result");
+    assert_eq!(data["outcome"]["degraded"], false);
+    assert_eq!(data["outcome"]["strategy"], "dynamic");
+    println!(
+        "streaming first-screen fallback render={}ms total={}ms",
+        events[0].1["preview"]["render_ms"], data["outcome"]["timings"]["total_ms"]
+    );
+}
+
+#[tokio::test]
+async fn streaming_degrades_after_fallback_without_white_screen() {
+    let mut config = test_config();
+    config.model.mock_latency_ms = 5_000;
+    config.pipeline = PipelineConfig {
+        timeout_ms: 300,
+        fallback_reserve_ms: 50,
+        ..PipelineConfig::default()
+    };
+    let app = app_with(config).await;
+    let (status, body) = send_sse(
+        &app,
+        with_bearer(post_json(
+            "/api/v1/ui/generate/dynamic/stream",
+            order_body("ORD_STREAM_002"),
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let events = parse_sse_events(&body);
+    assert_eq!(events[0].0, "fallback");
+    assert_eq!(events.last().unwrap().0, "degraded");
+    let outcome = &events.last().unwrap().1["outcome"];
+    assert_eq!(outcome["degradation_reason"], "model_timeout");
+    assert!(outcome["html_content"]
+        .as_str()
+        .unwrap()
+        .contains("ORD_STREAM_002"));
 }
