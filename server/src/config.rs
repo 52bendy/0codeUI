@@ -102,6 +102,14 @@ pub struct AppConfig {
     pub rate_limit_burst: u32,
     /// 请求处理超时秒数：`REQUEST_TIMEOUT_SECS`（默认 30）。
     pub request_timeout_secs: u64,
+    /// 是否启用埋点防刷配额：`TELEMETRY_QUOTA_ENABLED`（默认 true）。
+    pub telemetry_quota_enabled: bool,
+    /// 埋点配额：每用户每分钟允许的事件条数（`TELEMETRY_QUOTA_PER_MINUTE`，默认 600）。
+    pub telemetry_quota_per_minute: u32,
+    /// 埋点单次上报最大条数（`TELEMETRY_MAX_BATCH_SIZE`，默认 100）。
+    pub telemetry_max_batch_size: usize,
+    /// 是否启用防重放头校验（`TELEMETRY_REPLAY_ENABLED`，默认 false；完整签名见 REQ-202610-1186）。
+    pub telemetry_replay_enabled: bool,
     /// 数据库连接串：`DATABASE_URL`（默认 `sqlite://data/intimeui.db`）。
     pub database_url: String,
 }
@@ -178,6 +186,36 @@ impl AppConfig {
                 message: "must be >= 1".to_string(),
             });
         }
+
+        let telemetry_quota_enabled = match optional_env("TELEMETRY_QUOTA_ENABLED") {
+            Some(value) => parse_bool("TELEMETRY_QUOTA_ENABLED", &value)?,
+            None => true,
+        };
+        let telemetry_quota_per_minute = env_parse("TELEMETRY_QUOTA_PER_MINUTE", 600u32)?;
+        if telemetry_quota_per_minute == 0 {
+            return Err(ConfigError {
+                key: "TELEMETRY_QUOTA_PER_MINUTE",
+                message: "must be >= 1".to_string(),
+            });
+        }
+        let telemetry_max_batch_size = env_parse("TELEMETRY_MAX_BATCH_SIZE", 100usize)?;
+        if !(1..=1000).contains(&telemetry_max_batch_size) {
+            return Err(ConfigError {
+                key: "TELEMETRY_MAX_BATCH_SIZE",
+                message: "must be within 1..=1000".to_string(),
+            });
+        }
+        if telemetry_quota_per_minute < telemetry_max_batch_size as u32 {
+            return Err(ConfigError {
+                key: "TELEMETRY_QUOTA_PER_MINUTE",
+                message: "must be >= TELEMETRY_MAX_BATCH_SIZE".to_string(),
+            });
+        }
+        let telemetry_replay_enabled = match optional_env("TELEMETRY_REPLAY_ENABLED") {
+            Some(value) => parse_bool("TELEMETRY_REPLAY_ENABLED", &value)?,
+            None => false,
+        };
+
         let database_url = env_string("DATABASE_URL", "sqlite://data/intimeui.db");
 
         Ok(Self {
@@ -192,6 +230,10 @@ impl AppConfig {
             rate_limit_rps,
             rate_limit_burst,
             request_timeout_secs,
+            telemetry_quota_enabled,
+            telemetry_quota_per_minute,
+            telemetry_max_batch_size,
+            telemetry_replay_enabled,
             database_url,
         })
     }
@@ -212,6 +254,10 @@ impl Default for AppConfig {
             rate_limit_rps: 50.0,
             rate_limit_burst: 100,
             request_timeout_secs: 30,
+            telemetry_quota_enabled: true,
+            telemetry_quota_per_minute: 600,
+            telemetry_max_batch_size: 100,
+            telemetry_replay_enabled: false,
             database_url: "sqlite://data/intimeui.db".to_string(),
         }
     }

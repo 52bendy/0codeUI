@@ -22,8 +22,9 @@
 │   │   ├── response.rs         # 统一响应结构 {code, msg, data}
 │   │   ├── state.rs            # 应用共享状态
 │   │   ├── telemetry.rs        # 结构化日志
+│   │   ├── telemetry_events.rs # 埋点事件模型与校验（REQ-202610-1174）
 │   │   ├── validation.rs       # 请求参数校验提取器
-│   │   ├── middleware/         # 鉴权 / 限流 / 超时中间件
+│   │   ├── middleware/         # 鉴权 / 限流 / 超时 / 埋点配额 / 防重放接入点
 │   │   ├── routes/             # 路由注册与端点
 │   │   └── bin/intimeui-seed.rs # 种子数据一键加载 CLI
 │   └── tests/                  # 集成测试（api.rs / data_model.rs）
@@ -43,7 +44,8 @@
   - 结构化日志（dev pretty / prod json）与请求 ID 贯穿；
   - 健康检查：`/healthz`（存活）、`/readyz`（含数据库探测）；
   - 数据底座：用户 / 商品 / 订单 / 订单项 / 操作记录五张表，版本化迁移 + 幂等种子数据；
-  - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）。
+  - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）；
+  - 埋点采集：单条 / 批量事件上报、字段校验、按用户防刷配额、用户维度明细与聚合查询（REQ-202610-1174）。
 
 ### 快速开始（本地）
 
@@ -93,6 +95,10 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | `RATE_LIMIT_RPS` | `50` | 每秒补充令牌数 |
 | `RATE_LIMIT_BURST` | `100` | 令牌桶容量（突发额度） |
 | `REQUEST_TIMEOUT_SECS` | `30` | 请求处理超时 |
+| `TELEMETRY_QUOTA_ENABLED` | `true` | 是否启用埋点防刷配额 |
+| `TELEMETRY_QUOTA_PER_MINUTE` | `600` | 每用户每分钟允许上报的事件条数（需 ≥ 单批上限） |
+| `TELEMETRY_MAX_BATCH_SIZE` | `100` | 单次上报最大事件条数（1~1000） |
+| `TELEMETRY_REPLAY_ENABLED` | `false` | 是否校验防重放头（完整签名由 REQ-202610-1186 实现） |
 | `DATABASE_URL` | `sqlite://data/intimeui.db` | SQLite 连接串（文件自动创建；测试可用 `sqlite::memory:`） |
 
 > **密钥管理**：仅通过环境变量 / Secrets 注入，严禁写入仓库或数据库。生产环境请用部署平台（systemd `EnvironmentFile`、Docker secrets、K8s Secret 等）下发。
@@ -125,6 +131,9 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | POST | `/api/v1/echo` | 是 | 参数校验示例（`message` 1~500 字；`priority` 1~9） |
 | GET | `/api/v1/orders/{order_id}/business-data` | 是 | 订单业务数据（PRD §5.1 `business_data` 同构） |
 | GET | `/api/v1/users/{user_id}/balance` | 是 | 用户余额（精确十进制金额） |
+| POST | `/api/v1/telemetry/event` | 是 | 埋点事件上报（单条或 `{events:[...]}` 批量） |
+| GET | `/api/v1/telemetry/events` | 是 | 埋点明细（按用户 / 页面 / 时间过滤，分页） |
+| GET | `/api/v1/telemetry/aggregate` | 是 | 埋点聚合（总体均值 + 分页面均值） |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 
@@ -159,6 +168,63 @@ cargo run -p intimeui-server --bin intimeui-seed -- --database-url sqlite://data
 ```
 
 种子加载使用 `INSERT OR IGNORE`，重复执行不会产生重复记录；返回本次实际插入行数。
+
+### 埋点事件采集（M2，REQ-202610-1174）
+
+**表结构**：`server/migrations/0002_telemetry_events.sql`（`telemetry_events`）。
+按用户 / 页面 / 时间建立索引；`UNIQUE(user_id, event_id)` 保证客户端重试幂等。
+
+**数据最小化**：只落库交互指标（`dwell_time` / `element_click_rate` / `misclick_rate` /
+`scroll_depth`）与定位字段（`user_id` / `page_id` / 时间戳）。事件结构启用了
+`deny_unknown_fields`，任何额外字段（页面 HTML、URL、文本内容等）都会被 400 拒绝。
+
+**字段规则**：
+
+| 字段 | 类型 | 规则 |
+| --- | --- | --- |
+| `page_id` | string | 1~128 字符，仅 `[A-Za-z0-9._:-]` |
+| `dwell_time` | integer | 毫秒，`0..=86400000`（24h） |
+| `element_click_rate` | number | `0.0..=1.0` |
+| `misclick_rate` | number | `0.0..=1.0` |
+| `scroll_depth` | number | `0.0..=1.0` |
+| `user_id` | string | 可选；缺省取鉴权用户，显式提供时必须与鉴权用户一致 |
+| `timestamp` | string | 可选 RFC3339；缺省为接收时间，允许 90 天前 ~ 未来 5 分钟 |
+| `event_id` | string | 可选幂等键，1~64 字符；同用户重复上报会被跳过 |
+
+**上报示例（单条）**：
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/v1/telemetry/event \
+  -H 'Authorization: Bearer dev:u100' \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"u100","page_id":"scene:flash_sale","dwell_time":1200,
+       "element_click_rate":0.35,"misclick_rate":0.02,"scroll_depth":0.8,
+       "timestamp":"2026-10-22T06:00:00Z"}'
+# {"code":0,"msg":"ok","data":{"accepted":1,"duplicates":0,"event_ids":["TELE_..."]}}
+```
+
+**批量上报**：`{"events":[...]}`，单批上限由 `TELEMETRY_MAX_BATCH_SIZE` 控制（默认 100）；
+超出配额返回 `429`（`Retry-After` 为建议等待秒数）。
+
+**查询明细**：
+
+```bash
+curl -s 'http://127.0.0.1:8080/api/v1/telemetry/events?user_id=u100&page_id=scene:flash_sale&limit=50&offset=0' \
+  -H 'Authorization: Bearer dev:u100'
+```
+
+**聚合查询**（总体均值 + 分页面均值）：
+
+```bash
+curl -s 'http://127.0.0.1:8080/api/v1/telemetry/aggregate?user_id=u100' \
+  -H 'Authorization: Bearer dev:u100'
+```
+
+用户只能读写自己的埋点数据：`user_id` 与鉴权用户不一致返回 `403`。
+
+**防重放接入点**：上报入口统一经过 `middleware::replay::ReplayGuard`；
+`TELEMETRY_REPLAY_ENABLED=true` 时先校验 `x-timestamp` / `x-nonce` / `x-signature`
+三个头与 ±300s 时间窗，完整 HMAC 签名与 nonce 去重由 REQ-202610-1186 接入。
 
 ### 测试与检查
 
@@ -207,5 +273,6 @@ docker exec intimeui-server intimeui-seed
 
 ## 路线图（对应 REQ-202610-1168 拆解）
 
-- **M0 基础工程**：REQ-202610-1169 服务基座（已交付）、REQ-202610-1170 数据模型与种子数据（本批交付）
-- M1 模板兜底链路 / M2 埋点画像 / M3 意图引擎 / M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收
+- **M0 基础工程**：REQ-202610-1169 服务基座（已交付）、REQ-202610-1170 数据模型与种子数据（已交付）
+- **M2 埋点画像**：REQ-202610-1174 埋点事件采集（本批交付）；REQ-202610-1175 / 1176 待排期
+- M1 模板兜底链路 / M3 意图引擎 / M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收
