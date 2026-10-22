@@ -23,6 +23,8 @@ pub mod html_validator;
 pub mod middleware;
 pub mod model;
 pub mod models;
+pub mod obfuscation;
+pub mod pipeline;
 pub mod preference;
 pub mod profile;
 pub mod prompt;

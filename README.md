@@ -29,6 +29,8 @@
 │   │   ├── ui/                 # UI 生成契约、场景注册、模板与单文件 HTML 渲染
 │   │   ├── ui_template/        # 静态模板引擎与兜底渲染（M1）
 │   │   ├── model/              # UI 生成模型接入（配置 / provider / 网关 / 指标 / 校验）
+│   │   ├── pipeline/           # AI 生成管线编排 / 超时预算 / 缓存 / 降级 / 指标（REQ-202610-1185）
+│   │   ├── obfuscation/        # 单文件 HTML 输出混淆（DOM / CSS / JS 随机化，REQ-202610-1184）
 │   │   ├── html_validator/     # 单文件 HTML 输出校验器（结构 + 单文件 + 安全基线）
 │   │   ├── middleware/         # 鉴权 / 限流 / 超时中间件
 │   │   ├── routes/             # 路由注册与端点
@@ -38,7 +40,7 @@
 │   │       ├── intimeui-model-bench.rs # 模型延迟 / 成本基线 CLI
 │   │       └── intimeui-preference.rs  # 偏好数据统计 / 抽样 / 导出 CLI
 │   ├── templates/              # 单文件 HTML 模板（编译期内嵌）
-│   └── tests/                  # 集成测试（api / data_model / ui_generate / template_engine / ui_render_api / model_api / html_validator / validate_cli / profile_engine / user_profile / prompt_assembler / preference_pipeline）
+│   └── tests/                  # 集成测试（api / data_model / ui_generate / template_engine / ui_render_api / model_api / html_validator / validate_cli / profile_engine / user_profile / prompt_assembler / preference_pipeline / obfuscation / pipeline_api）
 ├── training/dpo/               # DPO 离线训练骨架（数据校验 / 切分 / 训练计划 / 评测）
 ├── docs/                       # 技术方案、模型推理部署与延迟基线文档
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
@@ -168,6 +170,17 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/model/generate \
 | `PREFERENCE_EXPORT_MAX_PER_USER` | `50` | 单用户导出上限（去偏） |
 | `PREFERENCE_EXPORT_MAX_PER_SCENE` | `1000` | 单场景导出上限（去偏） |
 | `PREFERENCE_USER_HASH_SALT` | dev 默认值 | 用户/会话哈希盐；prod 必填且 ≥16 字符 |
+| `PIPELINE_ENABLED` | `true` | 是否启用动态生成管线（false 时全部走静态模板） |
+| `PIPELINE_TIMEOUT_MS` | `1500` | 端到端时间预算（首屏感知 ≤1.5s 硬约束） |
+| `PIPELINE_FALLBACK_RESERVE_MS` | `50` | 预留给静态模板兜底的时间 |
+| `PIPELINE_CACHE_ENABLED` | `true` | 是否启用响应缓存 |
+| `PIPELINE_CACHE_TTL_SECS` / `PIPELINE_CACHE_MAX_ENTRIES` | `300` / `256` | 缓存 TTL 与容量（FIFO 淘汰） |
+| `PIPELINE_OBFUSCATION_LEVEL` | `standard` | 管线内混淆开关与强度：`off` / `basic` / `standard` |
+| `UI_OBFUSCATION_ENABLED` | `true` | 是否对下发 HTML 做输出混淆 |
+| `UI_OBFUSCATION_LEVEL` | `standard` | 混淆强度：`off` / `basic` / `standard` / `aggressive` |
+| `UI_OBFUSCATION_SESSION_TTL_SECS` | `1800` | 会话类名映射表 TTL |
+| `UI_OBFUSCATION_MAX_SESSIONS` | `1000` | 会话映射表容量 |
+| `UI_OBFUSCATION_MIN_IDENTIFIER_COVERAGE` | `0.8` | 非保留标识符覆盖率下限 |
 
 > **密钥管理**：仅通过环境变量 / Secrets 注入，严禁写入仓库或数据库。生产环境请用部署平台（systemd `EnvironmentFile`、Docker secrets、K8s Secret 等）下发。
 
@@ -203,6 +216,11 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/model/generate \
 | GET | `/api/v1/users/{user_id}/balance` | 是 | 用户余额（精确十进制金额） |
 | POST | `/api/v1/ui/generate` | 是 | UI 生成（场景注册 + 单文件 HTML，见下节） |
 | POST | `/api/v1/ui/render` | 是 | 静态模板渲染（单文件 HTML，兜底通道） |
+| POST | `/api/v1/ui/generate/dynamic` | 是 | AI 动态生成（编排 + 超时 + 降级 + 缓存） |
+| POST | `/api/v1/ui/generate/dynamic/stream` | 是 | 动态生成 SSE（先 `fallback` 首屏，再 `result` / `degraded`） |
+| GET | `/api/v1/ui/pipeline/metrics` | 是 | 管线成功率 / 降级原因 / 缓存 / 延迟分位 |
+| GET | `/api/v1/ui/pipeline/info` | 是 | 管线配置与降级链路说明 |
+| POST | `/api/v1/ui/obfuscate` | 是 | 对任意完整 HTML 执行输出混淆并返回统计 |
 | POST | `/api/v1/ui/model/generate` | 是 | UI 生成（非流式，返回单文件 HTML / 耗时 / token / 成本） |
 | POST | `/api/v1/ui/model/stream` | 是 | UI 生成（SSE：`meta` → `delta` → `done`） |
 | GET | `/api/v1/ui/model/info` | 是 | 模型提供者、模型列表与并发 / 超时配置 |
@@ -418,6 +436,60 @@ cat page.html | cargo run -p intimeui-server --bin intimeui-validate -- -
 ```
 
 **可配置项**（`ValidatorConfig`）：`max_bytes`、`max_depth`、`max_issues`、`require_doctype`、`allow_data_uris`、`allowed_external_hosts`、`allowed_event_attributes`、`forbidden_elements`。
+### 输出混淆与防逆向（M1 · REQ-202610-1184）
+
+单文件 HTML 在返回前会经过输出混淆层：DOM 包装节点 / 属性顺序随机化、CSS 类名按会话
+映射表随机化、JS 局部变量与参数名随机化，并在输出后再次通过 REQ-202610-1173 校验器。
+
+- **强度**：`off` / `basic` / `standard`（默认）/ `aggressive`，支持环境变量与请求级覆盖；
+- **防指纹**：同一页面两次请求输出不同；同一会话类名映射稳定，不同会话映射不同；
+- **接口**：`POST /api/v1/ui/obfuscate` 可直接混淆任意完整 HTML 并返回统计；
+  `/api/v1/ui/render` 与 `/api/v1/ui/generate` 自动执行同一套混淆；
+- **安全**：混淆失败返回 500，不会下发未复检的 HTML；CSS 组合选择器 / 子元素伪类存在时
+  自动关闭包装节点，避免破坏布局。
+
+```rust
+use intimeui_server::obfuscation::{obfuscate_html, ObfuscationConfig, ObfuscationLevel};
+
+let config = ObfuscationConfig {
+    level: ObfuscationLevel::Aggressive,
+    ..ObfuscationConfig::default()
+};
+let result = obfuscate_html(html, &config, Some("sess_abc123"))?;
+println!("{} -> {} bytes, coverage={}", result.stats.bytes_before, result.stats.bytes_after, result.stats.identifier_coverage);
+```
+
+详见 [`docs/output-obfuscation.md`](docs/output-obfuscation.md)。
+
+### AI 生成管线编排与降级兜底（REQ-202610-1185）
+
+动态生成按固定链路编排：场景校验 → 用户画像 → Prompt 拼装 → 模型网关 → 单文件 HTML 校验 →
+输出混淆 → 返回。端到端预算默认 1500ms，其中预留 50ms 给静态模板兜底；模型超时、排队超时、
+校验失败、混淆失败或总预算耗尽时，立即切换 REQ-202610-1172 静态模板，返回 `render_type=template`，
+保证无白屏。
+
+- **接口**：`POST /api/v1/ui/generate/dynamic`（`bypass_cache` 可强制穿透缓存）；
+- **流式首屏**：`POST /api/v1/ui/generate/dynamic/stream` 先下发预渲染静态页（`fallback`），
+  再推送动态结果（`result`）或降级结果（`degraded`），首屏感知为模板渲染耗时；
+- **可观测**：`GET /api/v1/ui/pipeline/metrics` 返回成功率、降级次数与原因分布、缓存命中率、
+  P50/P95/max 延迟、预算内比例；每次请求输出结构化 `pipeline_outcome` 日志；
+- **版本可追溯**：动态结果版本为 `dynamic:<scene>:v1-<prompt_hash 前 8 位>`，静态兜底为
+  `template:<scene>:<template_version>`；
+- **缓存**：键包含场景 / 用户 / 设备 / Prompt / 业务数据 / 模型 / 画像版本，默认 TTL 300s、FIFO 淘汰。
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/v1/ui/generate/dynamic \
+  -H 'Authorization: Bearer dev:9527' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "user_id": "9527",
+    "scene_code": "ORDER_DETAIL_PAGE",
+    "device_info": {"screen_width": 390, "screen_height": 844, "platform": "android"},
+    "business_data": {"order_id": "ORD_20261014_001", "status": "PAID", "items": []}
+  }'
+```
+
+详见 [`docs/ai-generation-pipeline.md`](docs/ai-generation-pipeline.md)。
 
 ### 测试与检查
 
@@ -482,4 +554,6 @@ docker exec intimeui-server intimeui-seed
 
 - **M0 基础工程**：REQ-202610-1169 服务基座（已交付）、REQ-202610-1170 数据模型与种子数据（已交付）
 - **M1 模板兜底链路**：REQ-202610-1171 UI 生成接口与场景注册、REQ-202610-1172 静态模板引擎、REQ-202610-1173 单文件 HTML 校验器（均已交付）
+- **M1 输出安全**：REQ-202610-1184 输出混淆与防逆向（已交付：DOM / CSS / JS 随机化 + 会话映射 + 复检）
+- **M1 生成编排**：REQ-202610-1185 AI 生成管线编排与降级兜底（已交付：≤1.5s 预算 + 静态模板兜底 + 指标）
 - M2 埋点画像 / M3 意图引擎 / M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收

@@ -13,7 +13,7 @@ use super::error::ModelError;
 use super::metrics::{MetricsSnapshot, ModelMetrics};
 use super::mock::MockProvider;
 use super::openai::OpenAiCompatibleProvider;
-use super::prompt::{build_messages, extract_and_validate};
+use super::prompt::{build_messages, build_messages_with_system, extract_and_validate};
 use super::provider::{ModelProvider, ModelStream};
 use super::types::{ChatRequest, Usage};
 
@@ -183,11 +183,27 @@ impl ModelGateway {
 
     /// 非流式生成 UI。
     pub async fn generate_ui(&self, request: UiRequest) -> Result<UiGeneration, ModelError> {
+        self.generate_ui_with_system(request, None).await
+    }
+
+    /// 使用自定义 System Prompt 非流式生成 UI（动态管线使用）。
+    pub async fn generate_ui_with_system(
+        &self,
+        request: UiRequest,
+        system_prompt: Option<&str>,
+    ) -> Result<UiGeneration, ModelError> {
         let validated = ValidatedRequest::new(&self.config, request)?;
         let _permit = self.acquire().await?;
         let selected = self.select_model(validated.model.as_deref())?;
         let chain = self.model_chain(&selected);
-        let messages = build_messages(&validated.prompt, validated.scene_code.as_deref());
+        let messages = match system_prompt {
+            Some(system_prompt) => build_messages_with_system(
+                system_prompt,
+                &validated.prompt,
+                validated.scene_code.as_deref(),
+            ),
+            None => build_messages(&validated.prompt, validated.scene_code.as_deref()),
+        };
         let mut last_error = None;
         let mut attempts = 0u32;
 
@@ -276,10 +292,26 @@ impl ModelGateway {
 
     /// 流式生成 UI。
     pub async fn stream_ui(&self, request: UiRequest) -> Result<UiStream, ModelError> {
+        self.stream_ui_with_system(request, None).await
+    }
+
+    /// 使用自定义 System Prompt 流式生成 UI（动态管线使用）。
+    pub async fn stream_ui_with_system(
+        &self,
+        request: UiRequest,
+        system_prompt: Option<&str>,
+    ) -> Result<UiStream, ModelError> {
         let validated = ValidatedRequest::new(&self.config, request)?;
         let permit = self.acquire().await?;
         let selected = self.select_model(validated.model.as_deref())?;
-        let messages = build_messages(&validated.prompt, validated.scene_code.as_deref());
+        let messages = match system_prompt {
+            Some(system_prompt) => build_messages_with_system(
+                system_prompt,
+                &validated.prompt,
+                validated.scene_code.as_deref(),
+            ),
+            None => build_messages(&validated.prompt, validated.scene_code.as_deref()),
+        };
         let chat = ChatRequest {
             model: selected.clone(),
             messages,

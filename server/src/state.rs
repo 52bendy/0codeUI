@@ -7,6 +7,8 @@ use crate::config::AppConfig;
 use crate::db::Db;
 use crate::middleware::rate_limit::RateLimiter;
 use crate::model::{ModelError, ModelGateway};
+use crate::obfuscation::ObfuscationEngine;
+use crate::pipeline::{EngineObfuscator, Pipeline};
 
 /// 全局共享状态。
 #[derive(Clone)]
@@ -19,6 +21,10 @@ pub struct AppState {
     pub db: Arc<Db>,
     /// 模型网关。
     pub model: Arc<ModelGateway>,
+    /// AI 生成管线（编排 + 降级 + 缓存 + 指标）。
+    pub pipeline: Arc<Pipeline>,
+    /// 输出混淆引擎（会话级类名映射表）。
+    pub obfuscation: Arc<ObfuscationEngine>,
     /// 进程启动时间（用于健康检查 uptime）。
     pub started_at: Instant,
 }
@@ -42,11 +48,28 @@ impl AppState {
             config.rate_limit_burst,
             config.rate_limit_enabled,
         );
+        let db = Arc::new(db);
+        let obfuscation = Arc::new(ObfuscationEngine::new(
+            config.ui_obfuscation_session_ttl_secs,
+            config.ui_obfuscation_max_sessions,
+        ));
+        let obfuscator = Arc::new(EngineObfuscator::new(
+            obfuscation.clone(),
+            config.obfuscation_config(),
+        ));
+        let pipeline = Arc::new(Pipeline::with_obfuscator(
+            config.pipeline.clone(),
+            gateway.clone(),
+            db.clone(),
+            obfuscator,
+        ));
         Self {
             config: Arc::new(config),
             rate_limiter: Arc::new(rate_limiter),
-            db: Arc::new(db),
+            db,
             model: gateway,
+            pipeline,
+            obfuscation,
             started_at: Instant::now(),
         }
     }

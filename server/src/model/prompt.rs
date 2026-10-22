@@ -25,11 +25,23 @@ pub const SYSTEM_PROMPT: &str = r#"你是 InTimeUI 的资深前端工程师，�
 
 /// 组装模型消息。
 pub fn build_messages(user_prompt: &str, scene_code: Option<&str>) -> Vec<ChatMessage> {
+    build_messages_with_system(SYSTEM_PROMPT, user_prompt, scene_code)
+}
+
+/// 使用调用方提供的 System Prompt 组装模型消息。
+///
+/// 动态生成管线（REQ-202610-1185）使用 REQ-202610-1182 拼装出的版本化
+/// System Prompt；直接调用模型接口时仍使用内置 [`SYSTEM_PROMPT`]。
+pub fn build_messages_with_system(
+    system_prompt: &str,
+    user_prompt: &str,
+    scene_code: Option<&str>,
+) -> Vec<ChatMessage> {
     let scene = scene_code
         .map(|code| format!("\n场景编码：{code}"))
         .unwrap_or_default();
     vec![
-        ChatMessage::system(SYSTEM_PROMPT),
+        ChatMessage::system(system_prompt),
         ChatMessage::user(format!("用户需求：{user_prompt}{scene}")),
     ]
 }
