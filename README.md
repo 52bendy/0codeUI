@@ -26,12 +26,15 @@
 │   │   ├── ui/                 # UI 生成契约、场景注册、模板与单文件 HTML 渲染
 │   │   ├── ui_template/        # 静态模板引擎与兜底渲染（M1）
 │   │   ├── model/              # UI 生成模型接入（配置 / provider / 网关 / 指标 / 校验）
+│   │   ├── html_validator/     # 单文件 HTML 输出校验器（结构 + 单文件 + 安全基线）
 │   │   ├── middleware/         # 鉴权 / 限流 / 超时中间件
 │   │   ├── routes/             # 路由注册与端点
-│   │   ├── bin/intimeui-seed.rs # 种子数据一键加载 CLI
-│   │   └── bin/intimeui-model-bench.rs # 模型延迟 / 成本基线 CLI
+│   │   └── bin/
+│   │       ├── intimeui-seed.rs     # 种子数据一键加载 CLI
+│   │       ├── intimeui-validate.rs # 单文件 HTML 校验 CLI
+│   │       └── intimeui-model-bench.rs # 模型延迟 / 成本基线 CLI
 │   ├── templates/              # 单文件 HTML 模板（编译期内嵌）
-│   └── tests/                  # 集成测试（api.rs / data_model.rs / ui_generate.rs / template_engine.rs / ui_render_api.rs / model_api.rs）
+│   └── tests/                  # 集成测试（api.rs / data_model.rs / ui_generate.rs / template_engine.rs / ui_render_api.rs / model_api.rs / html_validator.rs / validate_cli.rs）
 ├── docs/                       # 技术方案、模型推理部署与延迟基线文档
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
 ├── deploy/                     # 部署参考（systemd 单元 / 模型推理 compose）
@@ -268,6 +271,60 @@ cargo run -p intimeui-server --bin intimeui-seed -- --database-url sqlite://data
 
 详见 [`docs/static-template-engine.md`](docs/static-template-engine.md)。
 
+### 单文件 HTML 输出校验器
+
+AI 生成的单文件 HTML 在下发前必须经过校验（REQ-202610-1173）。校验器为纯函数、无 IO，可直接接入生成流水线，也可作为 CLI 单独使用。
+
+```rust
+use intimeui_server::html_validator::validate_single_file_html;
+
+let result = validate_single_file_html(html);
+if !result.valid {
+    // 按结构化问题决定重试 / 兜底模板，并写入日志
+    for issue in result.errors() {
+        eprintln!("{:?} @ {}:{} {}", issue.kind, issue.position.line, issue.position.column, issue.message);
+    }
+}
+```
+
+**校验范围**：
+
+- 结构完整性：`DOCTYPE` / `html` / `head` / `body` 必须存在且顺序正确；标签必须闭合、嵌套合法；截断文档、未闭合注释 / 标签 / `script` / `style` 均会被拦截；
+- 单文件约束：禁止 `<script src>`、外部样式表、外链图片 / 字体 / 媒体与 CSS `url()` / `@import`；相对路径同样视为外部依赖；`data:` 资源默认允许（可配置关闭）；
+- 安全基线：事件属性白名单、禁用 `iframe` / `object` / `base` 等元素、拦截 `javascript:` / `vbscript:`（含实体与 CSS 转义混淆）、禁止 `meta refresh`、CSS `expression()` / `-moz-binding` / `behavior`；
+- 结构化结果：每条问题包含 `kind`、`severity`、`message`、`position`（字节偏移 + 1-based 行列）与 `snippet`，便于定位与自动重试；
+- 资源上限：默认 2 MiB、最大嵌套 128 层、最多 100 条问题，超出后返回 `too_large` / `max_depth_exceeded` / `too_many_issues`。
+
+**CLI**：
+
+```bash
+# 校验文件：退出码 0 通过、1 不通过、2 读取失败
+cargo run -p intimeui-server --bin intimeui-validate -- page.html
+
+# 或从标准输入读取
+cat page.html | cargo run -p intimeui-server --bin intimeui-validate -- -
+```
+
+输出示例（截断）：
+
+```json
+{
+  "valid": false,
+  "issues": [
+    {
+      "kind": "unclosed_tag",
+      "severity": "error",
+      "message": "标签 <div> 未闭合（文档结束）",
+      "position": { "offset": 96, "line": 6, "column": 5 },
+      "snippet": "<div class=\"card\">"
+    }
+  ],
+  "stats": { "bytes": 120, "elements": 9, "scripts": 1, "styles": 1, "max_depth": 4 }
+}
+```
+
+**可配置项**（`ValidatorConfig`）：`max_bytes`、`max_depth`、`max_issues`、`require_doctype`、`allow_data_uris`、`allowed_external_hosts`、`allowed_event_attributes`、`forbidden_elements`。
+
 ### 测试与检查
 
 ```bash
@@ -324,5 +381,5 @@ docker exec intimeui-server intimeui-seed
 ## 路线图（对应 REQ-202610-1168 拆解）
 
 - **M0 基础工程**：REQ-202610-1169 服务基座（已交付）、REQ-202610-1170 数据模型与种子数据（已交付）
-- **M1 模板兜底链路**：REQ-202610-1171 UI 生成接口与场景注册（本批交付）、REQ-202610-1172 静态模板引擎、REQ-202610-1173 单文件 HTML 校验器
+- **M1 模板兜底链路**：REQ-202610-1171 UI 生成接口与场景注册、REQ-202610-1172 静态模板引擎、REQ-202610-1173 单文件 HTML 校验器（均已交付）
 - M2 埋点画像 / M3 意图引擎 / M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收
