@@ -127,6 +127,30 @@ impl TemplateEngine {
     }
 }
 
+/// 适配 REQ-202610-1171 场景注册表：`ORDER_DETAIL_PAGE` 由本模板引擎渲染。
+///
+/// 保持 03 接口的 [`crate::ui::context::SceneContext`] → `Result<String, SceneError>`
+/// 签名，使 `POST /api/v1/ui/generate` 与 `POST /api/v1/ui/render` 共用同一份模板、
+/// 同一套业务数据校验与 HTML 转义规则。
+pub fn render_order_detail_scene(
+    ctx: &crate::ui::context::SceneContext<'_>,
+) -> Result<String, crate::ui::context::SceneError> {
+    let device = DeviceInfo {
+        screen_width: ctx.screen_width,
+        screen_height: ctx.screen_height,
+        platform: ctx.platform.to_string(),
+    };
+    TemplateEngine::global()
+        .render("ORDER_DETAIL_PAGE", ctx.business_data, &device)
+        .map(|page| page.html)
+        .map_err(|error| match error {
+            TemplateError::InvalidBusinessData(message) => {
+                crate::ui::context::SceneError::InvalidBusinessData(message)
+            }
+            other => crate::ui::context::SceneError::Render(other.to_string()),
+        })
+}
+
 /// 毫秒保留三位小数，便于响应体展示与性能统计。
 fn round_millis(value: f64) -> f64 {
     (value * 1000.0).round() / 1000.0

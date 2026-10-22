@@ -88,7 +88,8 @@ pub static SCENES: &[SceneDefinition] = &[
             template_version: "v1",
             max_business_data_bytes: 64 * 1024,
         },
-        renderer: Some(crate::ui::template::render_order_detail),
+        // 订单详情由 REQ-202610-1172 的静态模板引擎渲染（同一模板供 /ui/render 使用）。
+        renderer: Some(crate::ui_template::render_order_detail_scene),
     },
     SceneDefinition {
         code: "ORDER_LIST_PAGE",

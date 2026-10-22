@@ -133,6 +133,44 @@ async fn ui_render_inline_fetch_target_is_reachable() {
     assert_eq!(response["data"]["order_id"], "ORD_20261014_001");
 }
 
+/// 03 接口（REQ-202610-1171）的 `POST /api/v1/ui/generate` 在订单详情场景下
+/// 必须复用本需求的模板引擎：同一份模板、同一套校验与转义。
+#[tokio::test]
+async fn ui_generate_reuses_static_template_engine_for_order_detail() {
+    let app = app().await;
+    let payload = json!({
+        "user_id": "usr_9527",
+        "scene_code": "ORDER_DETAIL_PAGE",
+        "device_info": {
+            "screen_width": 390,
+            "screen_height": 844,
+            "platform": "android"
+        },
+        "business_data": {
+            "order_id": "ORD_20261014_001",
+            "status": "PAID",
+            "items": [
+                { "name": "智能降噪耳机", "price": 299.00, "qty": 1 }
+            ]
+        }
+    });
+    let request = with_bearer(post_json("/api/v1/ui/generate", payload), "dev:9527");
+    let (status, body) = send(&app, request).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["render_type"], "SINGLE_FILE_HTML");
+    assert_eq!(body["data"]["version"], "template:ORDER_DETAIL_PAGE:v1");
+    let html = body["data"]["html_content"]
+        .as_str()
+        .expect("html_content is string");
+    assert!(
+        html.contains("刷新订单状态"),
+        "应使用 REQ-202610-1172 的订单详情模板"
+    );
+    assert!(html.contains("Content-Security-Policy"));
+    assert!(html.contains("ORD_20261014_001"));
+}
+
 #[tokio::test]
 async fn ui_render_requires_authentication() {
     let app = app().await;

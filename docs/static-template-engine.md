@@ -119,9 +119,12 @@
 
 ### 与 03 / 17 的集成
 
-- **03（REQ-202610-1171）**：`TemplateEngine::render(scene_code, business_data, device)`
-  是静态模式渲染入口；`/api/v1/ui/generate` 的模板分支可直接调用，返回的
-  `html` 即单文件 HTML。场景编码与 03 的场景注册表保持一致。
+- **03（REQ-202610-1171，已接线）**：03 的场景注册表将 `ORDER_DETAIL_PAGE` 的
+  renderer 指向 `ui_template::render_order_detail_scene`，因此
+  `POST /api/v1/ui/generate` 与 `POST /api/v1/ui/render` 共用同一份模板、
+  同一套业务数据校验与转义规则；`generate` 返回的 `html_content` 即本引擎产出的
+  单文件 HTML，`version` 仍为 `template:ORDER_DETAIL_PAGE:v1`。
+  其余场景（订单列表 / 商品详情）暂由 03 自带渲染器提供，后续可平移至本模板库。
 - **17（REQ-202610-1185）**：动态生成超时、模型输出未通过校验器时，调用
   `TemplateEngine::render_fallback(...)`。该入口语义上只走模板策略，返回
   `strategy = "template"`，不抛动态生成相关错误。

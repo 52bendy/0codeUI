@@ -230,6 +230,7 @@ cargo run -p intimeui-server --bin intimeui-seed -- --database-url sqlite://data
 - **填充引擎**：`{{path}}` 插值、`{{#items}}` 迭代、`{{^items}}` 反向区块；所有插值默认 HTML 转义。
 - **内联交互**：模板内 `button.onclick` 直接 `fetch` 后端业务接口（如刷新订单状态），不嵌入任何凭据。
 - **接口**：`POST /api/v1/ui/render`，请求 `{scene_code, business_data, device_info?}`，返回 `{html, strategy, template_version, render_ms}`。
+- **与 03 打通**：`POST /api/v1/ui/generate` 的 `ORDER_DETAIL_PAGE` 已复用本引擎，两个入口输出同一份模板。
 - **兜底入口**：`TemplateEngine::render_fallback` 供动态生成管线（REQ-202610-1185）在超时 / 校验失败时调用。
 - **性能**：引擎级 P95 ≈ 0.4ms，HTTP 端到端 P95 ≈ 3.3ms（本机 debug 构建，方法见文档）。
 
