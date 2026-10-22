@@ -854,6 +854,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "http-body-util",
+ "regex",
  "rust_decimal",
  "serde",
  "serde_json",

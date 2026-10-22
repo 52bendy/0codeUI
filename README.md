@@ -17,6 +17,7 @@
 │   │   ├── config.rs           # 环境变量配置（含密钥注入）
 │   │   ├── db/                 # SQLite 连接池、迁移执行、种子数据
 │   │   ├── models.rs           # 核心业务领域模型（Decimal 金额）
+│   │   ├── intent_agent/       # 意图理解与 Tool Call Agent（M3）
 │   │   ├── repository/         # 数据访问层 + 原子能力（create_order 等）
 │   │   ├── error.rs            # 全局错误码规范 + AppError
 │   │   ├── response.rs         # 统一响应结构 {code, msg, data}
@@ -26,7 +27,7 @@
 │   │   ├── middleware/         # 鉴权 / 限流 / 超时中间件
 │   │   ├── routes/             # 路由注册与端点
 │   │   └── bin/intimeui-seed.rs # 种子数据一键加载 CLI
-│   └── tests/                  # 集成测试（api.rs / data_model.rs）
+│   └── tests/                  # 集成测试（api.rs / data_model.rs / intent_agent.rs）
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
 ├── deploy/                     # 部署参考（systemd 单元）
 ├── Dockerfile
@@ -43,7 +44,8 @@
   - 结构化日志（dev pretty / prod json）与请求 ID 贯穿；
   - 健康检查：`/healthz`（存活）、`/readyz`（含数据库探测）；
   - 数据底座：用户 / 商品 / 订单 / 订单项 / 操作记录五张表，版本化迁移 + 幂等种子数据；
-  - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）。
+  - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）；
+  - 意图理解与 Tool Call Agent（M3）：自然语言 → JSON Schema 决策树 → 函数调用序列，支持上下文指代消歧、多意图排序、非法输出拦截与澄清追问（详见 [`docs/intent-tool-call-agent.md`](docs/intent-tool-call-agent.md)）。
 
 ### 快速开始（本地）
 
@@ -93,6 +95,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | `RATE_LIMIT_RPS` | `50` | 每秒补充令牌数 |
 | `RATE_LIMIT_BURST` | `100` | 令牌桶容量（突发额度） |
 | `REQUEST_TIMEOUT_SECS` | `30` | 请求处理超时 |
+| `INTENT_AGENT_MAX_ATTEMPTS` | `2` | 意图 Agent 模型输出最大尝试次数（1~3） |
 | `DATABASE_URL` | `sqlite://data/intimeui.db` | SQLite 连接串（文件自动创建；测试可用 `sqlite::memory:`） |
 
 > **密钥管理**：仅通过环境变量 / Secrets 注入，严禁写入仓库或数据库。生产环境请用部署平台（systemd `EnvironmentFile`、Docker secrets、K8s Secret 等）下发。
@@ -125,6 +128,8 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | POST | `/api/v1/echo` | 是 | 参数校验示例（`message` 1~500 字；`priority` 1~9） |
 | GET | `/api/v1/orders/{order_id}/business-data` | 是 | 订单业务数据（PRD §5.1 `business_data` 同构） |
 | GET | `/api/v1/users/{user_id}/balance` | 是 | 用户余额（精确十进制金额） |
+| POST | `/api/v1/intent/understand` | 是 | 自然语言 → 结构化决策树 / 澄清追问 |
+| GET | `/api/v1/intent/tools` | 是 | 意图 Agent 可用能力清单（OpenAI function 定义） |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 
@@ -207,5 +212,6 @@ docker exec intimeui-server intimeui-seed
 
 ## 路线图（对应 REQ-202610-1168 拆解）
 
-- **M0 基础工程**：REQ-202610-1169 服务基座（已交付）、REQ-202610-1170 数据模型与种子数据（本批交付）
-- M1 模板兜底链路 / M2 埋点画像 / M3 意图引擎 / M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收
+- **M0 基础工程**：REQ-202610-1169 服务基座（已交付）、REQ-202610-1170 数据模型与种子数据（已交付）
+- **M3 意图引擎**：REQ-202610-1180 意图理解与 Tool Call Agent（本批交付）
+- M1 模板兜底链路 / M2 埋点画像 / M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收
