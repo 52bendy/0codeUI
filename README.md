@@ -19,6 +19,7 @@
 │   │   ├── models.rs           # 核心业务领域模型（Decimal 金额）
 │   │   ├── profile/            # 用户画像引擎（EWMA / 防抖动 / Prompt 注入）
 │   │   ├── prompt/             # 动态 System Prompt 拼装器（版本化 / 脱敏 / 注入防护）
+│   │   ├── preference/         # 偏好对齐数据管道（清洗 / 质量评分 / 审核 / 导出）
 │   │   ├── repository/         # 数据访问层 + 原子能力（create_order 等）
 │   │   ├── error.rs            # 全局错误码规范 + AppError
 │   │   ├── response.rs         # 统一响应结构 {code, msg, data}
@@ -34,9 +35,11 @@
 │   │   └── bin/
 │   │       ├── intimeui-seed.rs     # 种子数据一键加载 CLI
 │   │       ├── intimeui-validate.rs # 单文件 HTML 校验 CLI
-│   │       └── intimeui-model-bench.rs # 模型延迟 / 成本基线 CLI
+│   │       ├── intimeui-model-bench.rs # 模型延迟 / 成本基线 CLI
+│   │       └── intimeui-preference.rs  # 偏好数据统计 / 抽样 / 导出 CLI
 │   ├── templates/              # 单文件 HTML 模板（编译期内嵌）
-│   └── tests/                  # 集成测试（api / data_model / ui_generate / template_engine / ui_render_api / model_api / html_validator / validate_cli / profile_engine / user_profile / prompt_assembler）
+│   └── tests/                  # 集成测试（api / data_model / ui_generate / template_engine / ui_render_api / model_api / html_validator / validate_cli / profile_engine / user_profile / prompt_assembler / preference_pipeline）
+├── training/dpo/               # DPO 离线训练骨架（数据校验 / 切分 / 训练计划 / 评测）
 ├── docs/                       # 技术方案、模型推理部署与延迟基线文档
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
 ├── deploy/                     # 部署参考（systemd 单元 / 模型推理 compose）
@@ -62,6 +65,9 @@
     单文件 HTML 安全校验、延迟分位与 token / 成本指标。
   - 用户画像引擎：EWMA 偏好计算、单步限幅 / 死区 / 更新频率控制、冷启动置信度、Prompt 可注入 JSON（REQ-202610-1176）；
   - 动态 System Prompt 拼装器：画像 + 业务数据 + 场景约束 + Few-Shot 的版本化拼装，稳定可复现、敏感字段脱敏、指令注入防护（REQ-202610-1182）。
+  - **偏好对齐数据管道（REQ-202610-1188）**：显式调研 / 隐式信号 / A/B 对比统一为
+    `<Prompt, Chosen_HTML, Rejected_HTML>` 偏好对，入库前完成 PII 脱敏、HTML 校验、
+    质量评分与去重，支持人工复核、分层抽样与带清单的 DPO JSONL 导出；配套离线训练骨架。
 
 ### 快速开始（本地）
 
@@ -152,6 +158,16 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/model/generate \
 | `PROFILE_MAX_ALPHA` | `0.6` | 画像 EWMA 平滑系数上限，`[base, 1]` |
 | `PROFILE_MIN_UPDATE_INTERVAL_SECS` | `60` | 画像自动更新最小间隔（秒） |
 | `PROFILE_MAX_OBSERVATIONS` | `1000` | 单次画像刷新最多处理样本数 |
+| `PREFERENCE_ADMIN_TOKEN` | 空 | 偏好管理端令牌（`X-Preference-Token`）；prod 必填且 ≥16 字符 |
+| `PREFERENCE_MIN_QUALITY` | `0.5` | 低于该质量分自动拒绝 |
+| `PREFERENCE_AUTO_ACCEPT_QUALITY` | `0.8` | 达到该分且无阻断标记自动通过 |
+| `PREFERENCE_MAX_PROMPT_CHARS` | `8000` | Prompt 长度上限 |
+| `PREFERENCE_MAX_HTML_BYTES` | `262144` | 单侧 HTML 字节上限（256 KiB） |
+| `PREFERENCE_MAX_METADATA_BYTES` | `8192` | metadata 字节上限 |
+| `PREFERENCE_EXPORT_MAX_RECORDS` | `5000` | 单次导出记录上限 |
+| `PREFERENCE_EXPORT_MAX_PER_USER` | `50` | 单用户导出上限（去偏） |
+| `PREFERENCE_EXPORT_MAX_PER_SCENE` | `1000` | 单场景导出上限（去偏） |
+| `PREFERENCE_USER_HASH_SALT` | dev 默认值 | 用户/会话哈希盐；prod 必填且 ≥16 字符 |
 
 > **密钥管理**：仅通过环境变量 / Secrets 注入，严禁写入仓库或数据库。生产环境请用部署平台（systemd `EnvironmentFile`、Docker secrets、K8s Secret 等）下发。
 
@@ -194,6 +210,14 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/model/generate \
 | GET | `/api/v1/users/{user_id}/profile` | 是 | 读取用户画像（冷启动返回默认值） |
 | PUT | `/api/v1/users/{user_id}/profile` | 是 | 主动设置偏好（font_scale / density / theme / radius / spacing） |
 | POST | `/api/v1/users/{user_id}/profile/refresh` | 是 | 按埋点 / 调研样本重算画像（EWMA） |
+| POST | `/api/v1/preference/pairs` | 是 | 提交偏好对（幂等，自动清洗与评分） |
+| POST | `/api/v1/preference/pairs/from-survey` | 是 | 从偏好调研记录生成偏好对 |
+| GET | `/api/v1/preference/pairs` | 管理端 | 分页查询偏好对 |
+| GET | `/api/v1/preference/pairs/{id}` | 管理端 | 查看单条偏好对 |
+| POST | `/api/v1/preference/pairs/{id}/review` | 管理端 | 人工通过 / 拒绝 |
+| GET | `/api/v1/preference/stats` | 管理端 | 状态 / 来源 / 场景统计 |
+| GET | `/api/v1/preference/sample` | 管理端 | 确定性分层抽样 |
+| POST | `/api/v1/preference/export` | 管理端 | 导出 `dpo-jsonl-v1` 与清单 |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 
@@ -247,6 +271,34 @@ let assembled = PromptAssembler::assemble(&scene, &profile, &business_data, &few
 
 完整输入输出契约、脱敏字段清单与注入防护说明见
 [`docs/system-prompt-assembler.md`](docs/system-prompt-assembler.md)。
+
+### 偏好对齐数据管道与 DPO 训练准备（REQ-202610-1188）
+
+把显式调研（07）、隐式反馈与 A/B 对比统一为 `<Prompt, Chosen_HTML, Rejected_HTML>`
+偏好对，完成清洗、去偏、溯源与导出：
+
+- **入库清洗**：CRLF/NUL 规范化、长度限制、PII 脱敏（邮箱 / 手机号）、chosen 单文件
+  HTML 校验、rejected 非法标记、SHA-256 幂等去重；
+- **质量决策**：规则加权评分（0–1），低于阈值自动拒绝、高分自动通过、其余转人工复核；
+- **溯源**：用户 / 会话 / 请求 / 调研 ID、模板版本、模型与风格版本、管线版本全链路保留；
+- **去偏**：导出按 `content_hash` 去重，单用户 / 单场景限额，抽样按场景分层；
+- **导出**：`dpo-jsonl-v1` JSONL + 清单（条数、来源/场景分布、SHA-256、用户哈希指纹），
+  `intimeui-preference` CLI 与服务端共用同一实现。
+
+```bash
+# 统计 / 抽样 / 导出
+intimeui-preference stats
+intimeui-preference sample --limit 20 --seed review-2026-10
+intimeui-preference export --output data/dpo/export.jsonl --dry-run
+```
+
+DPO 训练骨架位于 [`training/dpo/`](training/dpo/README.md)：数据契约校验、稳定切分、
+训练计划（无需 GPU）、离线评测门禁与端到端冒烟；真实训练支持 QLoRA + TRL `DPOTrainer`。
+
+完整 API、清洗规则与验收说明见
+[`docs/dpo-preference-pipeline.md`](docs/dpo-preference-pipeline.md)，
+训练 → 评测 → 金丝雀节奏见
+[`docs/dpo-rollout-process.md`](docs/dpo-rollout-process.md)。
 
 **种子数据一键加载**：
 
@@ -374,7 +426,12 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo test -p intimeui-server --test prompt_assembler   # Prompt 拼装器专项
+cargo test -p intimeui-server --test preference_pipeline # 偏好数据管道专项（17 项）
 cargo build --release
+
+# DPO 数据侧测试（21 项，仅标准库）与无 GPU 端到端冒烟
+python3 -m unittest discover -s training/dpo/tests -t training/dpo -v
+python3 training/dpo/scripts/smoke_pipeline.py
 
 # 模型延迟 / 成本基线（mock 无需 GPU；真实模型先按部署文档启动 vLLM）
 cargo run --release -p intimeui-server --bin intimeui-model-bench -- \

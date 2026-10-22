@@ -11,6 +11,7 @@ pub mod example;
 pub mod health;
 pub mod model;
 pub mod orders;
+pub mod preference;
 pub mod profiles;
 pub mod telemetry_survey;
 pub mod ui;
@@ -66,6 +67,22 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/users/{user_id}/profile/refresh",
             post(profiles::refresh_profile),
         )
+        .route(
+            "/api/v1/preference/pairs",
+            post(preference::ingest_pair).get(preference::list_pairs),
+        )
+        .route(
+            "/api/v1/preference/pairs/from-survey",
+            post(preference::ingest_from_survey),
+        )
+        .route("/api/v1/preference/pairs/{id}", get(preference::get_pair))
+        .route(
+            "/api/v1/preference/pairs/{id}/review",
+            post(preference::review_pair),
+        )
+        .route("/api/v1/preference/stats", get(preference::stats))
+        .route("/api/v1/preference/sample", get(preference::sample))
+        .route("/api/v1/preference/export", post(preference::export))
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
     Router::new()

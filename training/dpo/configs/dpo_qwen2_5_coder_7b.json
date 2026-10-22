@@ -1,0 +1,15 @@
+{
+  "model_name": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "dataset_path": "data/dpo/export.jsonl",
+  "output_dir": "outputs/dpo-qwen2.5-coder-7b",
+  "max_length": 4096,
+  "learning_rate": 0.00005,
+  "epochs": 1,
+  "batch_size": 1,
+  "gradient_accumulation_steps": 8,
+  "beta": 0.1,
+  "lora_r": 16,
+  "lora_alpha": 32,
+  "lora_dropout": 0.05,
+  "seed": 42
+}

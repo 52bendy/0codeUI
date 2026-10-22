@@ -14,6 +14,7 @@ RUN useradd --system --uid 10001 --create-home intimeui \
     && chown intimeui:intimeui /data
 COPY --from=builder /build/target/release/intimeui-server /usr/local/bin/intimeui-server
 COPY --from=builder /build/target/release/intimeui-seed /usr/local/bin/intimeui-seed
+COPY --from=builder /build/target/release/intimeui-preference /usr/local/bin/intimeui-preference
 
 USER intimeui
 ENV APP_ENV=prod \

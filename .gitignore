@@ -11,3 +11,8 @@
 *.db
 *.db-shm
 *.db-wal
+
+# Python 训练脚本
+__pycache__/
+*.py[cod]
+.venv/

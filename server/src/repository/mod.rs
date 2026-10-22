@@ -5,6 +5,7 @@
 
 mod capabilities;
 mod orders;
+mod preference;
 mod products;
 mod profiles;
 mod telemetry_surveys;

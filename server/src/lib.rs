@@ -5,6 +5,7 @@
 //! - [`db`]：SQLite 连接池、迁移与种子数据；
 //! - [`error`]：全局错误码规范与错误类型；
 //! - [`models`]：核心业务领域模型；
+//! - [`preference`]：偏好对齐数据管道（REQ-202610-1188）；
 //! - [`repository`]：数据访问层与原子能力实现；
 //! - [`response`]：统一响应结构 `{code, msg, data}`；
 //! - [`middleware`]：鉴权 / 限流 / 超时中间件；
@@ -22,6 +23,7 @@ pub mod html_validator;
 pub mod middleware;
 pub mod model;
 pub mod models;
+pub mod preference;
 pub mod profile;
 pub mod prompt;
 pub mod repository;
