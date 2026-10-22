@@ -23,10 +23,11 @@
 │   │   ├── state.rs            # 应用共享状态
 │   │   ├── telemetry.rs        # 结构化日志
 │   │   ├── validation.rs       # 请求参数校验提取器
+│   │   ├── ui/                 # UI 生成契约、场景注册、模板与单文件 HTML 渲染
 │   │   ├── middleware/         # 鉴权 / 限流 / 超时中间件
 │   │   ├── routes/             # 路由注册与端点
 │   │   └── bin/intimeui-seed.rs # 种子数据一键加载 CLI
-│   └── tests/                  # 集成测试（api.rs / data_model.rs）
+│   └── tests/                  # 集成测试（api.rs / data_model.rs / ui_generate.rs）
 ├── .github/workflows/ci.yml    # CI：fmt + clippy + build + test
 ├── deploy/                     # 部署参考（systemd 单元）
 ├── Dockerfile
@@ -43,7 +44,8 @@
   - 结构化日志（dev pretty / prod json）与请求 ID 贯穿；
   - 健康检查：`/healthz`（存活）、`/readyz`（含数据库探测）；
   - 数据底座：用户 / 商品 / 订单 / 订单项 / 操作记录五张表，版本化迁移 + 幂等种子数据；
-  - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）。
+  - 原子能力数据层：`create_order` / `query_user_balance` / `update_item_status` / `delete_record`（含审计记录）；
+  - UI 生成（M1 第一阶段）：`POST /api/v1/ui/generate`，场景注册表（首批 3 个模板场景）与单文件 HTML 渲染。
 
 ### 快速开始（本地）
 
@@ -76,6 +78,21 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
   -H 'Authorization: Bearer dev:1001' \
   -H 'Content-Type: application/json' \
   -d '{"message":"hello","priority":5}'
+
+# 8. UI 生成（模板兜底 → 单文件 HTML）
+curl -s -X POST http://127.0.0.1:8080/api/v1/ui/generate \
+  -H 'Authorization: Bearer dev:usr_9527' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "user_id": "usr_9527",
+    "scene_code": "ORDER_DETAIL_PAGE",
+    "device_info": {"screen_width": 390, "screen_height": 844, "platform": "android"},
+    "business_data": {
+      "order_id": "ORD_20261014_001",
+      "status": "PAID",
+      "items": [{"name": "智能降噪耳机", "price": 299.00, "qty": 1}]
+    }
+  }'
 ```
 
 ### 环境变量
@@ -108,6 +125,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | `40100` | 401 | 未认证 / 凭据无效 |
 | `40300` | 403 | 无权限 |
 | `40400` | 404 | 资源不存在 |
+| `40410` | 404 | 未知场景（UI 生成接口，响应列出可用场景） |
 | `40900` | 409 | 资源冲突（唯一键重复） |
 | `42900` | 429 | 触发限流（附 `Retry-After`） |
 | `50000` | 500 | 服务内部错误 |
@@ -125,6 +143,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | POST | `/api/v1/echo` | 是 | 参数校验示例（`message` 1~500 字；`priority` 1~9） |
 | GET | `/api/v1/orders/{order_id}/business-data` | 是 | 订单业务数据（PRD §5.1 `business_data` 同构） |
 | GET | `/api/v1/users/{user_id}/balance` | 是 | 用户余额（精确十进制金额） |
+| POST | `/api/v1/ui/generate` | 是 | UI 生成（场景注册 + 单文件 HTML，见下节） |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 
@@ -159,6 +178,48 @@ cargo run -p intimeui-server --bin intimeui-seed -- --database-url sqlite://data
 ```
 
 种子加载使用 `INSERT OR IGNORE`，重复执行不会产生重复记录；返回本次实际插入行数。
+
+### UI 生成接口（M1 第一阶段）
+
+完整契约见 [`docs/ui-generate-contract.md`](docs/ui-generate-contract.md)。
+
+**请求**：`POST /api/v1/ui/generate`
+
+```json
+{
+  "user_id": "usr_9527",
+  "scene_code": "ORDER_DETAIL_PAGE",
+  "device_info": { "screen_width": 390, "screen_height": 844, "platform": "android" },
+  "business_data": {
+    "order_id": "ORD_20261014_001",
+    "status": "PAID",
+    "items": [{ "name": "智能降噪耳机", "price": 299.00, "qty": 1 }]
+  }
+}
+```
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "msg": "ok",
+  "data": {
+    "render_type": "SINGLE_FILE_HTML",
+    "version": "template:ORDER_DETAIL_PAGE:v1",
+    "html_content": "<!DOCTYPE html>..."
+  }
+}
+```
+
+- `version` 由 `<strategy>:<scene_code>:<template_version>` 组成，渲染策略与模板版本可追溯；
+- 首批场景：`ORDER_DETAIL_PAGE`、`ORDER_LIST_PAGE`、`PRODUCT_DETAIL_PAGE`（均为 `template` / `v1`）；
+- 未知 `scene_code` 返回 `40410` 并列出可用场景；请求体 / 业务数据非法返回 `40000`；
+- 生产模式请求 `user_id` 必须与认证用户一致，否则返回 `40300`；
+- 输出为完整单文件 HTML：内联 CSS/JS、CSP 限制、无外部资源、业务字段全部 HTML 转义。
+
+场景注册表位于 `server/src/ui/scene.rs`，模板实现位于 `server/src/ui/template.rs`；
+新增场景需同步补充场景契约、模板与 `server/tests/ui_generate.rs` 契约测试。
 
 ### 测试与检查
 
@@ -207,5 +268,6 @@ docker exec intimeui-server intimeui-seed
 
 ## 路线图（对应 REQ-202610-1168 拆解）
 
-- **M0 基础工程**：REQ-202610-1169 服务基座（已交付）、REQ-202610-1170 数据模型与种子数据（本批交付）
-- M1 模板兜底链路 / M2 埋点画像 / M3 意图引擎 / M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收
+- **M0 基础工程**：REQ-202610-1169 服务基座（已交付）、REQ-202610-1170 数据模型与种子数据（已交付）
+- **M1 模板兜底链路**：REQ-202610-1171 UI 生成接口与场景注册（本批交付）、REQ-202610-1172 静态模板引擎、REQ-202610-1173 单文件 HTML 校验器
+- M2 埋点画像 / M3 意图引擎 / M4 动态生成 / M5 安全 / M6 训练线 / M7 客户端与验收

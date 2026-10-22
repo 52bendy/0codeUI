@@ -11,6 +11,7 @@
 //! - [`routes`]：路由注册与端点实现；
 //! - [`state`]：应用共享状态；
 //! - [`telemetry`]：结构化日志；
+//! - [`ui`]：UI 生成契约、场景注册与模板渲染；
 //! - [`validation`]：请求参数校验提取器。
 
 pub mod config;
@@ -23,6 +24,7 @@ pub mod response;
 pub mod routes;
 pub mod state;
 pub mod telemetry;
+pub mod ui;
 pub mod validation;
 
 use std::time::Duration;
