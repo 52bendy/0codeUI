@@ -39,6 +39,7 @@ async fn main() -> ExitCode {
     tracing::info!(database_url = %config.database_url, "database ready");
 
     let state = AppState::new(config, db);
+    spawn_confirmation_sweeper(state.clone());
     let app = build_app(state);
 
     let listener = match tokio::net::TcpListener::bind((host.as_str(), port)).await {
@@ -77,6 +78,30 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// 后台清理过期确认单：每 30 秒最多处理 200 条。
+///
+/// 确认 / 拒绝路径本身也会做惰性过期检查；此任务保证无人操作的确认单
+/// 也能进入 `EXPIRED` 终态并留下审计事件。
+fn spawn_confirmation_sweeper(state: AppState) {
+    let service = state.confirmation_service.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            match service.expire_stale(200).await {
+                Ok(0) => {}
+                Ok(count) => {
+                    tracing::info!(count, "expired stale intent confirmations");
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to expire stale intent confirmations");
+                }
+            }
+        }
+    });
 }
 
 /// 等待 Ctrl-C / SIGTERM，实现优雅停机。

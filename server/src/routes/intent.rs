@@ -5,7 +5,7 @@ use axum::extract::State;
 use axum::Json;
 
 use crate::error::AppError;
-use crate::intent::model::{IntentExecuteRequest, IntentExecuteResponse};
+use crate::intent::model::{ActionType, IntentExecuteRequest, IntentExecuteResponse};
 use crate::middleware::auth::AuthUser;
 use crate::response::ApiResponse;
 use crate::state::AppState;
@@ -21,6 +21,26 @@ pub async fn execute(
     let Json(request) = payload.map_err(|rejection| {
         AppError::invalid_param(format!("invalid request body: {}", rejection.body_text()))
     })?;
-    let response = state.intent_service.execute(&auth.user_id, request).await?;
+    let mut response = state.intent_service.execute(&auth.user_id, request).await?;
+
+    // 写 / 删类意图只下发确认卡片；真正的执行必须走 confirm 端点。
+    if response.action_type == ActionType::RequireConfirmation {
+        let prompt = response
+            .confirmation_prompt
+            .clone()
+            .unwrap_or_else(|| "确认执行该操作吗？".to_string());
+        let confirmation = state
+            .confirmation_service
+            .create(
+                &auth.user_id,
+                &response.session_id,
+                &response.intent_summary,
+                &response.proposed_changes,
+                &prompt,
+            )
+            .await?;
+        response.confirmation = Some(confirmation);
+    }
+
     Ok(Json(ApiResponse::success(response)))
 }

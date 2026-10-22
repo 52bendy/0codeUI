@@ -144,6 +144,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/generate \
 | `REPLAY_MAX_BODY_BYTES` | `2097152` | 防重放中间件缓冲请求体上限（2 MiB） |
 | `INTENT_AGENT_MAX_ATTEMPTS` | `2` | 意图 Agent 模型输出最大尝试次数（1~3） |
 | `INTENT_SESSION_TTL_SECS` | `1800` | 意图会话上下文 TTL（秒，最小 1） |
+| `INTENT_CONFIRMATION_TTL_SECS` | `300` | 意图二次确认单有效期（秒，最小 1） |
 | `DATABASE_URL` | `sqlite://data/intimeui.db` | SQLite 连接串（文件自动创建；测试可用 `sqlite::memory:`） |
 
 > **密钥管理**：仅通过环境变量 / Secrets 注入，严禁写入仓库或数据库。生产环境请用部署平台（systemd `EnvironmentFile`、Docker secrets、K8s Secret 等）下发。
@@ -181,6 +182,8 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/generate \
 | GET | `/api/v1/telemetry/events` | 是 | 埋点明细（按用户 / 页面 / 时间过滤，分页） |
 | GET | `/api/v1/telemetry/aggregate` | 是 | 埋点聚合（总体均值 + 分页面均值） |
 | POST | `/api/v1/intent/execute` | 是 | 意图执行（PRD §5.2；读类直接执行，写 / 删类返回确认卡片；可要求防重放签名） |
+| POST | `/api/v1/intent/confirm` | 是 | 二次确认并执行（一次性令牌，仅执行一次） |
+| POST | `/api/v1/intent/reject` | 是 | 拒绝 / 取消确认，不执行任何动作 |
 | POST | `/api/v1/intent/understand` | 是 | 自然语言 → 结构化决策树 / 澄清追问 |
 | GET | `/api/v1/intent/tools` | 是 | 意图 Agent 可用能力清单（OpenAI function 定义） |
 | POST | `/api/v1/ui/generate` | 是 | UI 生成（场景注册 + 单文件 HTML，见下节；可要求防重放签名） |
@@ -188,6 +191,14 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/ui/generate \
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 意图执行契约详见 [`docs/intent-execute-contract.md`](docs/intent-execute-contract.md)。
+
+### 意图安全风控与二次确认（M5）
+
+写 / 删类意图只返回确认卡片（`data.confirmation`），必须由用户通过
+`POST /api/v1/intent/confirm` 确认后才执行，且仅执行一次；`reject` 用于拒绝 / 取消。
+确认令牌为一次性令牌，服务端只存 SHA-256 摘要，并校验用户、会话与过期时间。
+
+完整契约、状态机与审计事件见 [`docs/intent-guardrails.md`](docs/intent-guardrails.md)。
 
 ### 数据模型与种子数据（M0）
 

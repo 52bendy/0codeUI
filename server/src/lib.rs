@@ -21,6 +21,7 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod guardrails;
 pub mod intent;
 pub mod intent_agent;
 pub mod middleware;

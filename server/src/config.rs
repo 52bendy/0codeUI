@@ -128,6 +128,8 @@ pub struct AppConfig {
     pub intent_agent_max_attempts: usize,
     /// 意图会话 TTL 秒数：`INTENT_SESSION_TTL_SECS`（默认 1800，最小 1）。
     pub intent_session_ttl_secs: u64,
+    /// 二次确认单有效期秒数：`INTENT_CONFIRMATION_TTL_SECS`（默认 300，最小 1）。
+    pub intent_confirmation_ttl_secs: u64,
     /// 数据库连接串：`DATABASE_URL`（默认 `sqlite://data/intimeui.db`）。
     pub database_url: String,
 }
@@ -286,6 +288,13 @@ impl AppConfig {
                 message: "must be >= 1".to_string(),
             });
         }
+        let intent_confirmation_ttl_secs = env_parse("INTENT_CONFIRMATION_TTL_SECS", 300u64)?;
+        if intent_confirmation_ttl_secs == 0 {
+            return Err(ConfigError {
+                key: "INTENT_CONFIRMATION_TTL_SECS",
+                message: "must be >= 1".to_string(),
+            });
+        }
         let database_url = env_string("DATABASE_URL", "sqlite://data/intimeui.db");
 
         Ok(Self {
@@ -310,6 +319,7 @@ impl AppConfig {
             replay_max_body_bytes,
             intent_agent_max_attempts,
             intent_session_ttl_secs,
+            intent_confirmation_ttl_secs,
             database_url,
         })
     }
@@ -340,6 +350,7 @@ impl Default for AppConfig {
             replay_max_body_bytes: 2 * 1024 * 1024,
             intent_agent_max_attempts: 2,
             intent_session_ttl_secs: 1800,
+            intent_confirmation_ttl_secs: 300,
             database_url: "sqlite://data/intimeui.db".to_string(),
         }
     }

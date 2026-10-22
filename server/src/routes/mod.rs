@@ -13,6 +13,7 @@ pub mod example;
 pub mod health;
 pub mod intent;
 pub mod intent_agent;
+pub mod intent_confirm;
 pub mod orders;
 pub mod telemetry;
 pub mod ui;
@@ -55,6 +56,8 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/telemetry/aggregate",
             get(telemetry::aggregate_events),
         )
+        .route("/api/v1/intent/confirm", post(intent_confirm::confirm))
+        .route("/api/v1/intent/reject", post(intent_confirm::reject))
         .route("/api/v1/intent/understand", post(intent_agent::understand))
         .route("/api/v1/intent/tools", get(intent_agent::tools))
         .route("/api/v1/ui/render", post(ui_render::render_ui))

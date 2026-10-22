@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use crate::config::AppConfig;
 use crate::db::Db;
+use crate::guardrails::ConfirmationService;
 use crate::intent::planner::{IntentPlanner, RuleBasedIntentPlanner};
 use crate::intent::service::IntentService;
 use crate::intent_agent::ToolCallAgent;
@@ -30,6 +31,8 @@ pub struct AppState {
     pub intent_agent: Arc<ToolCallAgent>,
     /// 意图执行编排服务。
     pub intent_service: Arc<IntentService>,
+    /// 二次确认服务。
+    pub confirmation_service: Arc<ConfirmationService>,
     /// 进程启动时间（用于健康检查 uptime）。
     pub started_at: Instant,
 }
@@ -49,11 +52,14 @@ impl AppState {
         );
         let replay = Arc::new(ReplayService::new(&config, db.pool().clone()));
         let intent_agent = Arc::new(ToolCallAgent::rule_based(config.intent_agent_max_attempts));
+        let repository = Repository::from_db(&db);
         let intent_service = IntentService::new(
-            Repository::from_db(&db),
+            repository.clone(),
             Arc::new(RuleBasedIntentPlanner),
             config.intent_session_ttl_secs,
         );
+        let confirmation_service =
+            ConfirmationService::new(repository, config.intent_confirmation_ttl_secs);
         Self {
             config: Arc::new(config),
             rate_limiter: Arc::new(rate_limiter),
@@ -62,6 +68,7 @@ impl AppState {
             db: Arc::new(db),
             intent_agent,
             intent_service: Arc::new(intent_service),
+            confirmation_service: Arc::new(confirmation_service),
             started_at: Instant::now(),
         }
     }

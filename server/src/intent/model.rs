@@ -11,6 +11,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::guardrails::model::ConfirmationPayload;
+
 /// 输入类型：自然语言 / 前端控件交互事件树。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -212,6 +214,11 @@ pub struct IntentExecuteResponse {
     /// 二次确认文案（仅 `REQUIRE_CONFIRMATION` 时非空）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confirmation_prompt: Option<String>,
+    /// 二次确认卡片载荷（仅 `REQUIRE_CONFIRMATION` 时返回）。
+    ///
+    /// 包含确认单编号与一次性令牌；客户端确认 / 拒绝时原样回传。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirmation: Option<ConfirmationPayload>,
     /// 解析后的会话上下文。
     pub context: SessionContext,
     /// 读类能力的执行结果（仅 `EXECUTE` 时非空）。

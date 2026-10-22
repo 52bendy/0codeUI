@@ -254,6 +254,65 @@ impl Repository {
         Ok(item)
     }
 
+    /// `update_order_address`：更新订单收货地址并写入审计记录。
+    pub async fn update_order_address(
+        &self,
+        actor_user_id: Option<&str>,
+        order_id: &str,
+        new_address: &str,
+    ) -> Result<Order, RepositoryError> {
+        let new_address = new_address.trim();
+        if new_address.is_empty() || new_address.chars().count() > 200 {
+            return Err(RepositoryError::Invalid(
+                "new_address must be 1..=200 characters".to_string(),
+            ));
+        }
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let now = Utc::now();
+
+        let result =
+            sqlx::query("UPDATE orders SET shipping_address = ?, updated_at = ? WHERE id = ?")
+                .bind(new_address)
+                .bind(now)
+                .bind(order_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(RepositoryError::NotFound {
+                entity: "order",
+                id: order_id.to_string(),
+            });
+        }
+
+        let request_payload =
+            json!({ "order_id": order_id, "new_address": new_address }).to_string();
+        let result_payload =
+            json!({ "order_id": order_id, "shipping_address": new_address }).to_string();
+
+        sqlx::query(
+            "INSERT INTO operation_records
+                 (id, actor_user_id, capability, entity_type, entity_id,
+                  request_payload, result_payload, status, created_at)
+             VALUES (?, ?, 'update_order_address', 'order', ?, ?, ?, 'SUCCESS', ?)",
+        )
+        .bind(new_id("OPR"))
+        .bind(actor_user_id)
+        .bind(order_id)
+        .bind(request_payload)
+        .bind(result_payload)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+
+        self.find_order(order_id).await
+    }
+
     /// `delete_record`：删除指定实体并写入审计记录。
     pub async fn delete_record(
         &self,
