@@ -125,6 +125,9 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/echo \
 | POST | `/api/v1/echo` | 是 | 参数校验示例（`message` 1~500 字；`priority` 1~9） |
 | GET | `/api/v1/orders/{order_id}/business-data` | 是 | 订单业务数据（PRD §5.1 `business_data` 同构） |
 | GET | `/api/v1/users/{user_id}/balance` | 是 | 用户余额（精确十进制金额） |
+| POST | `/api/v1/telemetry/survey` | 是 | 提交 A/B 偏好调研（selected / rejected style） |
+| GET | `/api/v1/telemetry/surveys` | 是 | 调研明细（按会话 / 场景 / 样式 / 时间过滤，分页） |
+| GET | `/api/v1/telemetry/surveys/aggregate` | 是 | 调研聚合（样式选择 / 拒绝、场景分布、A/B 样式对） |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 
@@ -159,6 +162,78 @@ cargo run -p intimeui-server --bin intimeui-seed -- --database-url sqlite://data
 ```
 
 种子加载使用 `INSERT OR IGNORE`，重复执行不会产生重复记录；返回本次实际插入行数。
+
+### 显式偏好调研（M2，REQ-202610-1175）
+
+实现 PRD §3.2 的 A/B 偏好反馈采集：用户在一个场景下选择 `selected_style_id`、
+拒绝 `rejected_style_id`，结果落库并可查询 / 聚合，供画像引擎（REQ-202610-1176）
+与 DPO 数据管道（REQ-202610-1188）消费。
+
+**提交调研**：
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/v1/telemetry/survey \
+  -H 'Authorization: Bearer dev:u100' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "session_id": "sess_001",
+    "scene_code": "ORDER_DETAIL_PAGE",
+    "selected_style_id": "style_modern_dark",
+    "rejected_style_id": "style_classic_light",
+    "survey_id": "survey_001"
+  }'
+```
+
+响应：
+
+```json
+{
+  "code": 0,
+  "msg": "ok",
+  "data": {
+    "accepted": true,
+    "duplicate": false,
+    "survey": {
+      "id": "SURV_...",
+      "survey_id": "survey_001",
+      "user_id": "u100",
+      "session_id": "sess_001",
+      "scene_code": "ORDER_DETAIL_PAGE",
+      "selected_style_id": "style_modern_dark",
+      "rejected_style_id": "style_classic_light",
+      "timestamp": "2026-10-22T06:00:00Z",
+      "received_at": "2026-10-22T06:00:01Z"
+    }
+  }
+}
+```
+
+`survey_id` 为客户端幂等键：同一用户重复提交返回 `accepted=false, duplicate=true`
+与已落库记录；不传时由服务端生成。
+
+**查询与聚合**：
+
+```bash
+# 明细（可按 session_id / scene_code / style_id / from / to 过滤，分页）
+curl -s 'http://127.0.0.1:8080/api/v1/telemetry/surveys?scene_code=ORDER_DETAIL_PAGE&limit=50' \
+  -H 'Authorization: Bearer dev:u100'
+
+# 聚合：按样式选择 / 拒绝次数、场景分布、A/B 样式对
+curl -s 'http://127.0.0.1:8080/api/v1/telemetry/surveys/aggregate' \
+  -H 'Authorization: Bearer dev:u100'
+```
+
+**字段约束**：`user_id` 1~64；`session_id` / `scene_code` / `selected_style_id` /
+`rejected_style_id` 1~128，仅允许 ASCII 字母、数字与 `._:-`；`selected_style_id`
+与 `rejected_style_id` 必须不同；`timestamp` 为 RFC3339，允许范围「90 天前 ~ 未来 5 分钟」。
+请求体启用 `deny_unknown_fields`，不接收自由文本 / 页面内容。
+
+**与埋点事件关联**：`telemetry_surveys.user_id` / `scene_code` / `occurred_at` 与
+`telemetry_events.user_id` / `page_id` / `occurred_at` 使用同一套维度；同一会话内
+可按 `session_id` 归集，按 `(user_id, scene_code, occurred_at)` 对齐事件窗口。
+
+**表结构**：`server/migrations/0003_telemetry_surveys.sql`（`telemetry_surveys`）。
+迁移编号 0003 预留给 REQ-202610-1174 的 `0002_telemetry_events.sql`，合并顺序 1174 → 1175。
 
 ### 测试与检查
 
