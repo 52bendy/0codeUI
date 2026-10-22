@@ -148,6 +148,7 @@ impl IntentService {
             intent_summary: plan.intent_summary,
             proposed_changes,
             confirmation_prompt,
+            confirmation: None,
             context: final_context,
             execution_results,
         })

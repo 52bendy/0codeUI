@@ -108,6 +108,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/intent/execute \
 | `RATE_LIMIT_BURST` | `100` | 令牌桶容量（突发额度） |
 | `REQUEST_TIMEOUT_SECS` | `30` | 请求处理超时 |
 | `INTENT_SESSION_TTL_SECS` | `1800` | 意图会话上下文 TTL（秒，最小 1） |
+| `INTENT_CONFIRMATION_TTL_SECS` | `300` | 意图二次确认单有效期（秒，最小 1） |
 | `DATABASE_URL` | `sqlite://data/intimeui.db` | SQLite 连接串（文件自动创建；测试可用 `sqlite::memory:`） |
 
 > **密钥管理**：仅通过环境变量 / Secrets 注入，严禁写入仓库或数据库。生产环境请用部署平台（systemd `EnvironmentFile`、Docker secrets、K8s Secret 等）下发。
@@ -141,9 +142,19 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/intent/execute \
 | GET | `/api/v1/orders/{order_id}/business-data` | 是 | 订单业务数据（PRD §5.1 `business_data` 同构） |
 | GET | `/api/v1/users/{user_id}/balance` | 是 | 用户余额（精确十进制金额） |
 | POST | `/api/v1/intent/execute` | 是 | 意图执行（PRD §5.2；读类直接执行，写 / 删类返回确认卡片） |
+| POST | `/api/v1/intent/confirm` | 是 | 二次确认并执行（一次性令牌，仅执行一次） |
+| POST | `/api/v1/intent/reject` | 是 | 拒绝 / 取消确认，不执行任何动作 |
 
 鉴权方式：请求头 `Authorization: Bearer <token>`；开发模式额外接受 `Bearer dev:<user_id>`。
 意图执行契约详见 [`docs/intent-execute-contract.md`](docs/intent-execute-contract.md)。
+
+### 意图安全风控与二次确认（M5）
+
+写 / 删类意图只返回确认卡片（`data.confirmation`），必须由用户通过
+`POST /api/v1/intent/confirm` 确认后才执行，且仅执行一次；`reject` 用于拒绝 / 取消。
+确认令牌为一次性令牌，服务端只存 SHA-256 摘要，并校验用户、会话与过期时间。
+
+完整契约、状态机与审计事件见 [`docs/intent-guardrails.md`](docs/intent-guardrails.md)。
 
 ### 数据模型与种子数据（M0）
 

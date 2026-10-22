@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use crate::config::AppConfig;
 use crate::db::Db;
+use crate::guardrails::ConfirmationService;
 use crate::intent::planner::RuleBasedIntentPlanner;
 use crate::intent::service::IntentService;
 use crate::middleware::rate_limit::RateLimiter;
@@ -21,6 +22,8 @@ pub struct AppState {
     pub db: Arc<Db>,
     /// 意图执行编排服务。
     pub intent_service: Arc<IntentService>,
+    /// 二次确认服务。
+    pub confirmation_service: Arc<ConfirmationService>,
     /// 进程启动时间（用于健康检查 uptime）。
     pub started_at: Instant,
 }
@@ -33,16 +36,20 @@ impl AppState {
             config.rate_limit_burst,
             config.rate_limit_enabled,
         );
+        let repository = Repository::from_db(&db);
         let intent_service = IntentService::new(
-            Repository::from_db(&db),
+            repository.clone(),
             Arc::new(RuleBasedIntentPlanner),
             config.intent_session_ttl_secs,
         );
+        let confirmation_service =
+            ConfirmationService::new(repository, config.intent_confirmation_ttl_secs);
         Self {
             config: Arc::new(config),
             rate_limiter: Arc::new(rate_limiter),
             db: Arc::new(db),
             intent_service: Arc::new(intent_service),
+            confirmation_service: Arc::new(confirmation_service),
             started_at: Instant::now(),
         }
     }

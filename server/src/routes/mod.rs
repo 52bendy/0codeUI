@@ -8,6 +8,7 @@
 pub mod example;
 pub mod health;
 pub mod intent;
+pub mod intent_confirm;
 pub mod orders;
 
 use axum::middleware::from_fn_with_state;
@@ -35,6 +36,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/users/{user_id}/balance", get(orders::user_balance))
         .route("/api/v1/intent/execute", post(intent::execute))
+        .route("/api/v1/intent/confirm", post(intent_confirm::confirm))
+        .route("/api/v1/intent/reject", post(intent_confirm::reject))
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
     Router::new()
