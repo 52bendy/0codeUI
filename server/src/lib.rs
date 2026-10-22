@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! InTimeUI 后端服务（M0 基础工程）。
 //!
 //! 模块划分：
@@ -16,6 +18,8 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod intent;
+pub mod intent_agent;
 pub mod middleware;
 pub mod models;
 pub mod repository;
