@@ -10,6 +10,7 @@ pub mod example;
 pub mod health;
 pub mod model;
 pub mod orders;
+pub mod pipeline;
 pub mod profiles;
 pub mod ui;
 pub mod ui_render;
@@ -39,7 +40,13 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/users/{user_id}/balance", get(orders::user_balance))
         .route("/api/v1/ui/generate", post(ui::generate))
+        .route(
+            "/api/v1/ui/generate/dynamic",
+            post(pipeline::generate_dynamic),
+        )
         .route("/api/v1/ui/render", post(ui_render::render_ui))
+        .route("/api/v1/ui/pipeline/metrics", get(pipeline::metrics))
+        .route("/api/v1/ui/pipeline/info", get(pipeline::info))
         .route("/api/v1/ui/model/generate", post(model::generate))
         .route("/api/v1/ui/model/stream", post(model::stream))
         .route("/api/v1/ui/model/info", get(model::info))

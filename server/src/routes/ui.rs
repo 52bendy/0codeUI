@@ -25,7 +25,7 @@ pub async fn generate(
 }
 
 /// 生产模式下请求的 `user_id` 必须与凭据一致；开发模式允许跨用户联调。
-fn ensure_user_scope(
+pub(crate) fn ensure_user_scope(
     state: &AppState,
     auth: &AuthUser,
     requested_user_id: &str,

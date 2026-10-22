@@ -7,6 +7,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use crate::model::config::ModelConfig;
+use crate::pipeline::config::PipelineConfig;
 
 /// 运行环境。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +117,8 @@ pub struct AppConfig {
     pub profile_min_update_interval_secs: u64,
     /// 单次画像刷新最多处理的样本数：`PROFILE_MAX_OBSERVATIONS`（默认 1000）。
     pub profile_max_observations: usize,
+    /// AI 生成管线配置（`PIPELINE_*`）。
+    pub pipeline: PipelineConfig,
 }
 
 impl AppConfig {
@@ -228,6 +231,7 @@ impl AppConfig {
                 message: "must be in 1..=10000".to_string(),
             });
         }
+        let pipeline = PipelineConfig::from_env()?;
 
         Ok(Self {
             env,
@@ -247,6 +251,7 @@ impl AppConfig {
             profile_max_alpha,
             profile_min_update_interval_secs,
             profile_max_observations,
+            pipeline,
         })
     }
 }
@@ -272,6 +277,7 @@ impl Default for AppConfig {
             profile_max_alpha: 0.6,
             profile_min_update_interval_secs: 60,
             profile_max_observations: 1000,
+            pipeline: PipelineConfig::default(),
         }
     }
 }

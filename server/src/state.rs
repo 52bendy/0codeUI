@@ -7,6 +7,7 @@ use crate::config::AppConfig;
 use crate::db::Db;
 use crate::middleware::rate_limit::RateLimiter;
 use crate::model::{ModelError, ModelGateway};
+use crate::pipeline::Pipeline;
 
 /// 全局共享状态。
 #[derive(Clone)]
@@ -19,6 +20,8 @@ pub struct AppState {
     pub db: Arc<Db>,
     /// 模型网关。
     pub model: Arc<ModelGateway>,
+    /// AI 生成管线（编排 + 降级 + 缓存 + 指标）。
+    pub pipeline: Arc<Pipeline>,
     /// 进程启动时间（用于健康检查 uptime）。
     pub started_at: Instant,
 }
@@ -42,11 +45,18 @@ impl AppState {
             config.rate_limit_burst,
             config.rate_limit_enabled,
         );
+        let db = Arc::new(db);
+        let pipeline = Arc::new(Pipeline::new(
+            config.pipeline.clone(),
+            gateway.clone(),
+            db.clone(),
+        ));
         Self {
             config: Arc::new(config),
             rate_limiter: Arc::new(rate_limiter),
-            db: Arc::new(db),
+            db,
             model: gateway,
+            pipeline,
             started_at: Instant::now(),
         }
     }

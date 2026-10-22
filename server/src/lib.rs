@@ -21,6 +21,7 @@ pub mod html_validator;
 pub mod middleware;
 pub mod model;
 pub mod models;
+pub mod pipeline;
 pub mod profile;
 pub mod prompt;
 pub mod repository;
