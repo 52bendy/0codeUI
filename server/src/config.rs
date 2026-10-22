@@ -104,6 +104,8 @@ pub struct AppConfig {
     pub request_timeout_secs: u64,
     /// 意图 Agent 模型输出最大尝试次数：`INTENT_AGENT_MAX_ATTEMPTS`（默认 2，范围 1..=3）。
     pub intent_agent_max_attempts: usize,
+    /// 意图会话 TTL 秒数：`INTENT_SESSION_TTL_SECS`（默认 1800，最小 1）。
+    pub intent_session_ttl_secs: u64,
     /// 数据库连接串：`DATABASE_URL`（默认 `sqlite://data/intimeui.db`）。
     pub database_url: String,
 }
@@ -187,6 +189,13 @@ impl AppConfig {
                 message: "must be between 1 and 3".to_string(),
             });
         }
+        let intent_session_ttl_secs = env_parse("INTENT_SESSION_TTL_SECS", 1800u64)?;
+        if intent_session_ttl_secs == 0 {
+            return Err(ConfigError {
+                key: "INTENT_SESSION_TTL_SECS",
+                message: "must be >= 1".to_string(),
+            });
+        }
         let database_url = env_string("DATABASE_URL", "sqlite://data/intimeui.db");
 
         Ok(Self {
@@ -202,6 +211,7 @@ impl AppConfig {
             rate_limit_burst,
             request_timeout_secs,
             intent_agent_max_attempts,
+            intent_session_ttl_secs,
             database_url,
         })
     }
@@ -223,6 +233,7 @@ impl Default for AppConfig {
             rate_limit_burst: 100,
             request_timeout_secs: 30,
             intent_agent_max_attempts: 2,
+            intent_session_ttl_secs: 1800,
             database_url: "sqlite://data/intimeui.db".to_string(),
         }
     }

@@ -7,6 +7,7 @@
 
 pub mod example;
 pub mod health;
+pub mod intent;
 pub mod intent_agent;
 pub mod orders;
 
@@ -34,6 +35,7 @@ pub fn router(state: AppState) -> Router {
             get(orders::order_business_data),
         )
         .route("/api/v1/users/{user_id}/balance", get(orders::user_balance))
+        .route("/api/v1/intent/execute", post(intent::execute))
         .route("/api/v1/intent/understand", post(intent_agent::understand))
         .route("/api/v1/intent/tools", get(intent_agent::tools))
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));

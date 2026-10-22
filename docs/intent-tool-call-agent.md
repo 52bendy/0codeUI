@@ -29,14 +29,16 @@ server/src/intent_agent/
 ├── context.rs    # 页面/HTML/会话/数据上下文解析与指代消解
 ├── rules.rs      # 确定性规则模型（无模型凭据时的回退与测试基线）
 ├── prompt.rs     # 系统提示词、能力清单、Schema、few-shot
-└── agent.rs      # ToolCallAgent 编排：生成 → 解析 → 校验 → 绑定 → 重试/澄清
+├── agent.rs      # ToolCallAgent 编排：生成 → 解析 → 校验 → 绑定 → 重试/澄清
+└── intent_execute.rs # #09 IntentPlanner 适配器（自然语言走 Agent，UI 事件回退规则规划器）
 ```
 
 路由与状态：
 
-- `server/src/routes/intent_agent.rs`
+- `server/src/routes/intent_agent.rs`、`server/src/routes/intent.rs`
 - `AppState.intent_agent: Arc<ToolCallAgent>`
-- `AppState::with_intent_agent(...)` 用于测试或替换模型实现。
+- `AppState::with_intent_agent(...)` 用于测试或替换模型实现；
+- `AppState::with_intent_planner(...)` 将 #09 执行入口切换到 `ToolCallPlanner`。
 
 ## 3. HTTP 契约
 
@@ -325,7 +327,8 @@ pub trait IntentPlanner: Send + Sync {
 
 ## 10. 测试集
 
-`server/src/intent_agent/` 单元测试与 `server/tests/intent_agent.rs` 集成测试覆盖：
+`server/src/intent_agent/` 单元测试、`server/tests/intent_agent.rs` 与
+`server/tests/intent_execute_integration.rs` 集成测试覆盖：
 
 | 用例 | 验收点 |
 | --- | --- |
@@ -337,6 +340,7 @@ pub trait IntentPlanner: Send + Sync {
 | 「先查余额，然后查询订单…」 | 多意图、执行顺序、`depends_on` |
 | 未鉴权 / user_id 不一致 / 空文本 / 未知字段 | 401 / 403 / 400 |
 | `GET /api/v1/intent/tools` | 6 个能力与 function 定义 |
+| `POST /api/v1/intent/execute` × Agent | 读类执行、写/删确认、会话指代、多意图 `additional_calls`、UI 事件回退 |
 
 运行：
 

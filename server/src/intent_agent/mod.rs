@@ -12,6 +12,7 @@
 pub mod agent;
 pub mod catalog;
 pub mod context;
+pub mod intent_execute;
 pub mod model;
 pub mod prompt;
 pub mod rules;
@@ -19,6 +20,7 @@ pub mod schema;
 
 pub use agent::{IntentModel, ToolCallAgent};
 pub use catalog::{CapabilityDescriptor, RiskLevel};
+pub use intent_execute::ToolCallPlanner;
 pub use model::{
     AgentMeta, Clarification, Condition, ConditionOperator, Decision, DecisionStatus, EntityRef,
     IntentNode, MatchMode, ModelError, ModelInput, PageContext, ResolvedContext, SessionContext,
